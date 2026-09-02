@@ -1,6 +1,7 @@
 // src/ui/settings.js - Settings screen: connection, league picker, files,
 // name matching, player map, debug log.
-import { esc, fmtDateTime, fmtAgo, posClass, n1 } from './dom.js';
+import { esc, fmtDateTime, fmtAgo, fmtAge, ageClass, posClass, n1 } from './dom.js';
+import { storageEstimate } from '../storage.js';
 import { draftConfig, userSlot, picksForSlot, groupTurns } from '../draft.js';
 
 export function renderSettings(state) {
@@ -10,6 +11,7 @@ export function renderSettings(state) {
     state.bundle ? leagueSummaryCard(state) : '',
     state.bundle ? liveCard(state) : '',
     filesCard(state),
+    storageCard(state),
     unmatchedCard(state),
     valueCard(state),
     simCard(state),
@@ -186,12 +188,14 @@ const FILE_LABELS = [
 ];
 
 function filesCard(state) {
+  const site = state.siteFiles || [];
   const items = FILE_LABELS.map(([k, label]) => {
     const f = state.files[k];
     const p = state.parsed[k];
     const err = state.parseErrors[k];
+    const siteCopy = site.find((x) => x.kind === k);
     let sub;
-    if (!f) sub = '<span class="muted">Not uploaded</span>';
+    if (!f) sub = '<span class="status-bad">Not loaded</span>';
     else if (err) sub = `<span class="status-bad">Parse error: ${esc(err)}</span>`;
     else if (k === 'projections')
       sub = `${p.count} rows: ${Object.entries(p.counts)
@@ -203,11 +207,24 @@ function filesCard(state) {
       sub = `${p.count} players; analysts ${esc(p.analysts.join(', '))}${p.duplicates.length ? `; ${p.duplicates.length} duplicate merged` : ''}${warn}`;
     }
     const active = k !== 'projections' && state.activeRankingsKey === k && f ? ' <span class="status-ok">in use</span>' : '';
+    let age = '';
+    if (f) {
+      age = `<div class="small"><span class="${ageClass(f.uploadedAt)}"><b>${fmtAge(f.uploadedAt)}</b></span> <span class="muted">${esc(f.name)}, data dated ${fmtDateTime(f.uploadedAt)}${f.source === 'site' ? `, loaded from the site ${fmtAgo(f.loadedAt)}` : ', uploaded from Files'}</span></div>`;
+    }
+    let siteLine = '';
+    if (siteCopy) {
+      const siteAt = Date.parse(siteCopy.mtime) || 0;
+      const newer = f && siteAt > (f.uploadedAt || 0) + 60000;
+      const same = f && f.source === 'site' && f.name === siteCopy.name && Math.abs(siteAt - f.uploadedAt) < 60000;
+      siteLine = `<div class="small ${newer ? 'status-warn' : 'muted'}">${newer ? 'Newer copy on the site: ' : 'Site copy: '}${esc(siteCopy.name)}, ${fmtAge(siteAt)}${same ? ' (this one)' : ''}</div>`;
+    }
+    const loadBtn = siteCopy ? `<button class="btn" data-action="load-site-file" data-kind="${k}">${f ? 'Reload from site' : 'Load from site'}</button>` : '';
     return `<div class="filerow">
-      <div class="grow"><div><b>${label}</b>${active}</div><div class="muted small">${sub}</div>${f ? `<div class="muted small">${esc(f.name)}, ${fmtAgo(f.uploadedAt)} (${fmtDateTime(f.uploadedAt)})</div>` : ''}</div>
-      <div class="filebtns"><label class="btn">${f ? 'Replace' : 'Upload'}<input type="file" accept=".csv,text/csv,text/plain" data-file="${k}" hidden></label>${f ? `<button class="btn" data-action="remove-file" data-file="${k}">Remove</button>` : ''}</div>
+      <div class="grow"><div><b>${label}</b>${active}</div><div class="muted small">${sub}</div>${age}${siteLine}</div>
+      <div class="filebtns"><label class="btn">${f ? 'Replace' : 'Upload'}<input type="file" accept=".csv,text/csv,text/plain" data-file="${k}" hidden></label>${loadBtn}${f ? `<button class="btn" data-action="remove-file" data-file="${k}">Remove</button>` : ''}</div>
     </div>`;
   }).join('');
+  const busy = state.busy.site ? `<p class="muted">${esc(state.busy.site)}</p>` : '';
   let sel = '';
   if (state.leagueId) {
     const forced = state.settings.rankingsFileByLeague[state.leagueId] || 'auto';
@@ -216,7 +233,26 @@ function filesCard(state) {
     const opt = (v, label) => `<option value="${v}" ${forced === v ? 'selected' : ''}>${label}</option>`;
     sel = `<div class="row"><div class="grow">Rankings file for this league</div><select data-select="rankingsFile">${opt('auto', `Auto (${auto})`)}${opt('rankings1qb', '1QB')}${opt('rankingsSuperflex', 'Superflex')}</select></div>`;
   }
-  return `<section class="card"><h2>Files</h2><p class="muted small">Upload from the Files app. Files stay in this browser and are re-parsed on every load.</p>${items}${sel}</section>`;
+  return `<section class="card ${!state.files.projections ? 'warn' : ''}"><h2>Files</h2><p class="muted small">Files stay in this browser and are re-parsed on every load. Upload replaces the stored copy. "Load from site" pulls the CSV committed in the repo's docs folder.</p>${busy}${items}${sel}</section>`;
+}
+
+function storageCard(state) {
+  const si = state.storageInfo;
+  if (!si) return '';
+  const where = si.standalone ? 'Home Screen app' : si.inApp ? "another app's built-in browser" : 'a browser tab';
+  const kb = Math.round(storageEstimate() / 1024);
+  const filesStored = ['projections', 'rankings1qb', 'rankingsSuperflex'].filter((k) => state.files[k]).length;
+  const warn = si.inApp ? '<p class="status-warn">Files uploaded here may not survive closing this view. Open the page in Safari or from the Home Screen icon instead.</p>' : '';
+  return `<section class="card ${si.inApp ? 'warn' : ''}"><h2>Storage</h2>
+    <div class="kv">
+      <div>Running in</div><div>${where}</div>
+      <div>Files stored here</div><div>${filesStored} of 3</div>
+      <div>Persistent storage</div><div>${si.persisted == null ? 'unknown' : si.persisted ? 'granted' : 'not granted'}</div>
+      <div>Local data</div><div>${kb} KB</div>
+    </div>
+    ${warn}
+    <p class="muted small">iOS keeps separate storage for Safari, the Home Screen app, and other apps' built-in browsers. Files loaded in one are not visible in the others, so load them once in the one you will use on draft day.</p>
+  </section>`;
 }
 
 function unmatchedCard(state) {

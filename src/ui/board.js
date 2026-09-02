@@ -1,6 +1,17 @@
 // src/ui/board.js - Board screen: filter chips + ranked list of available
 // players with value, points, tier, injury and survival to the next turns.
-import { esc, n1, pct, posClass, survClass } from './dom.js';
+import { esc, n1, pct, posClass, survClass, fmtAge, ageClass } from './dom.js';
+
+function fileStatusLine(state) {
+  const parts = [];
+  const pf = state.files.projections;
+  parts.push(pf ? `projections <span class="${ageClass(pf.uploadedAt)}">${fmtAge(pf.uploadedAt)}</span>` : '<span class="status-bad">no projections</span>');
+  const rk = state.activeRankingsKey;
+  const rf = rk ? state.files[rk] : null;
+  const label = rk === 'rankings1qb' ? '1QB rankings' : 'superflex rankings';
+  parts.push(rf ? `${label} <span class="${ageClass(rf.uploadedAt)}">${fmtAge(rf.uploadedAt)}</span>` : `<span class="status-warn">no ${label}</span>`);
+  return `<p class="muted small">Files: ${parts.join(', ')}. Manage in Settings.</p>`;
+}
 
 export const BOARD_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX'];
 
@@ -70,7 +81,10 @@ function waitOnCard(state) {
 export function renderBoard(state) {
   if (!state.model) {
     if (!state.leagueId) return '<div class="placeholder">Select a league in Settings.</div>';
-    if (!state.parsed.projections) return '<div class="placeholder">Upload the projections CSV in Settings.</div>';
+    if (!state.parsed.projections) {
+      const hasSite = (state.siteFiles || []).some((f) => f.kind === 'projections');
+      return `<div class="placeholder">No projections loaded in this browser.${hasSite ? '<br><br><button class="btn primary" data-action="load-site-file" data-kind="projections">Load projections from the site</button><br>' : ''}<br>Or upload the CSV in Settings.</div>`;
+    }
     return '<div class="placeholder">Building the board</div>';
   }
   const filter = state.boardFilter || 'ALL';
@@ -93,5 +107,6 @@ export function renderBoard(state) {
     <div class="card list">${rows || '<div class="placeholder">No players</div>'}</div>
     ${list.length > limit ? '<button class="btn block" data-action="board-more">Show more</button>' : ''}
     ${waitOnCard(state)}
-    <p class="muted small">Value = blended VORP over replacement (${esc(bl)}). Tap a row for details.</p>`;
+    <p class="muted small">Value = blended VORP over replacement (${esc(bl)}). Tap a row for details.</p>
+    ${fileStatusLine(state)}`;
 }

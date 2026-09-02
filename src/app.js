@@ -73,6 +73,8 @@ export const state = {
   draftSort: 'pick',
   live: null,
   userDrafts: [],
+  siteFiles: null,
+  storageInfo: null,
   detailId: null,
   sim: null,
   simClient: null,
@@ -241,6 +243,72 @@ async function onFileChosen(input) {
   }
   rebuild();
   render();
+}
+
+// Copies of the CSVs committed in docs/ (listed by tools/stamp.mjs). They let
+// a fresh browser container load the files without the Files app.
+async function loadSiteManifest() {
+  try {
+    const r = await fetch('./docs/files.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const j = await r.json();
+    state.siteFiles = Array.isArray(j.files) ? j.files : [];
+  } catch (e) {
+    log(`site file list failed: ${e.message}`);
+  }
+  render();
+}
+
+async function loadSiteFile(kind) {
+  const entry = (state.siteFiles || []).find((f) => f.kind === kind);
+  if (!entry || !FILE_KEYS[kind]) return;
+  state.busy.site = `Loading ${entry.name} from the site`;
+  render();
+  try {
+    const r = await fetch(`./${encodeURI(entry.file)}`, { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const text = await r.text();
+    const dataAt = Date.parse(entry.mtime) || Date.now();
+    state.files[kind] = { v: 1, text, name: entry.name, uploadedAt: dataAt, loadedAt: Date.now(), size: text.length, source: 'site' };
+    saveJSON(FILE_KEYS[kind], state.files[kind]);
+    parseFile(kind);
+    const p = state.parsed[kind];
+    log(`loaded ${kind} from site: ${entry.name}, ${p ? `${p.count} rows` : 'parse failed'}`);
+    rebuild();
+  } catch (e) {
+    log(`site load failed: ${e.message}`);
+    toast(`Could not load ${entry.name}: ${e.message}`);
+  }
+  state.busy.site = null;
+  render();
+}
+
+// Where the page is running. iOS keeps separate storage for Safari, the Home
+// Screen app, and other apps' built-in browsers, which looks like "lost files".
+function detectStorage() {
+  const nav = navigator;
+  const ua = nav.userAgent || '';
+  const standalone = nav.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  const ios = /iPhone|iPad|iPod/.test(ua);
+  const inApp = ios && !standalone && !/Safari\//.test(ua);
+  return { standalone, ios, inApp, persisted: null };
+}
+
+async function requestPersistentStorage() {
+  try {
+    if (nav_has_storage()) {
+      const already = await navigator.storage.persisted();
+      const granted = already || (await navigator.storage.persist());
+      state.storageInfo.persisted = granted;
+      log(`storage persistent: ${granted}${already ? ' (already)' : ''}`);
+    }
+  } catch (e) {
+    log(`storage persist check failed: ${e.message}`);
+  }
+}
+
+function nav_has_storage() {
+  return typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.persist === 'function' && typeof navigator.storage.persisted === 'function';
 }
 
 export function activeRankingsKey() {
@@ -737,6 +805,9 @@ const actions = {
     startLive();
     render();
   },
+  async 'load-site-file'(btn) {
+    await loadSiteFile(btn.dataset.kind);
+  },
   async 'find-drafts'() {
     const uid = currentUserId();
     if (!uid) return;
@@ -924,10 +995,13 @@ async function init() {
   loadFiles();
   bindEvents();
   state.simClient = new SimClient({ log });
+  state.storageInfo = detectStorage();
   rebuild();
   if (state.bundle && state.bundle.draft) startLive();
   render();
-  log(`app start ${location.href} build ${VERSION}`);
+  log(`app start ${location.href} build ${VERSION} (${state.storageInfo.standalone ? 'home screen app' : state.storageInfo.inApp ? 'in-app browser' : 'browser tab'}; files: ${Object.keys(FILE_KEYS).filter((k) => state.files[k]).join(', ') || 'none'})`);
+  requestPersistentStorage();
+  loadSiteManifest();
   // Pull a newer build if one was deployed (never mid-draft: only when not drafting).
   const drafting = state.bundle && state.bundle.draft && state.bundle.draft.status === 'drafting';
   if (!drafting) checkForUpdate(log);

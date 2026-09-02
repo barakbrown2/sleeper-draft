@@ -1,0 +1,21 @@
+{
+  "generated": "2026-09-02T22:47:00.829Z",
+  "files": [
+    {
+      "kind": "projections",
+      "file": "docs/NFL Fantasy Football Player Projections (2026 Season) (8).csv",
+      "name": "NFL Fantasy Football Player Projections (2026 Season) (8).csv",
+      "mtime": "2026-09-02T21:40:52.384Z",
+      "size": 33066,
+      "rows": 442
+    },
+    {
+      "kind": "rankingsSuperflex",
+      "file": "docs/nfl-rankings-export (6).csv",
+      "name": "nfl-rankings-export (6).csv",
+      "mtime": "2026-09-02T21:40:52.401Z",
+      "size": 12799,
+      "rows": 377
+    }
+  ]
+}

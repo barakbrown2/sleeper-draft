@@ -33,6 +33,22 @@ export function fmtAgo(ts) {
   return `${Math.round(h / 24)}d ago`;
 }
 
+// Age of a data file: "35 min old", "6 h old", "3 d old".
+export function fmtAge(ts) {
+  if (!ts) return 'never';
+  const h = (Date.now() - ts) / 3600000;
+  if (h < 1) return `${Math.max(1, Math.round(h * 60))} min old`;
+  if (h < 48) return `${Math.round(h)} h old`;
+  return `${Math.round(h / 24)} d old`;
+}
+
+// Green up to 3 days, amber up to 10, red beyond.
+export function ageClass(ts) {
+  if (!ts) return 'status-bad';
+  const d = (Date.now() - ts) / 86400000;
+  return d <= 3 ? 'status-ok' : d <= 10 ? 'status-warn' : 'status-bad';
+}
+
 export function n1(x) {
   if (x == null || Number.isNaN(x)) return '-';
   return (Math.round(x * 10) / 10).toFixed(1);
