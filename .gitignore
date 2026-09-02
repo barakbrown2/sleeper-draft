@@ -1,0 +1,16 @@
+# No dependencies or build output in this repo (OneDrive-synced, no-build site)
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+dist/
+build/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+
+# Local Claude Code settings
+.claude/settings.local.json
