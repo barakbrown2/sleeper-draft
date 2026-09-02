@@ -1039,12 +1039,16 @@ async function connect() {
 }
 
 async function refreshLeague() {
-  if (!state.leagueId) return;
+  const id = state.leagueId;
+  if (!id) return;
   try {
-    state.bundle = await api.fetchLeagueBundle(state.leagueId);
-    const d = state.bundle.draft;
-    log(`league ${state.bundle.league.name}: draft ${d ? `${d.status} ${d.type} ${d.settings.rounds}r ${d.settings.pick_timer}s` : 'none'}`);
+    const bundle = await api.fetchLeagueBundle(id);
+    if (state.leagueId !== id) return; // the user switched leagues while this was in flight
+    state.bundle = bundle;
+    const d = bundle.draft;
+    log(`league ${bundle.league.name}: draft ${d ? `${d.status} ${d.type} ${d.settings.rounds}r ${d.settings.pick_timer}s` : 'none'}`);
   } catch (e) {
+    if (state.leagueId !== id) return;
     log(`league refresh failed: ${e.message}`);
     toast(`League refresh failed: ${e.message}`);
   }
