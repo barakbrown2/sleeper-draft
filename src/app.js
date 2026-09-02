@@ -418,7 +418,10 @@ export function rebuild() {
     }
   }
   applyNeed();
-  if (state.live) runSim('model');
+  if (state.live) {
+    runSim('model');
+    if (state.live.draft && state.live.draft.status !== 'complete') runPlan('model');
+  }
 }
 
 // Roster-need multipliers for the user's own roster (plan section 9.1):
@@ -467,8 +470,12 @@ async function runPlan(reason) {
   const model = state.model;
   const seq = ++state.planSeq;
   const result = await state.planClient.run(input, { N: 300, adapt: false });
-  // Drop the result if a newer plan was requested or the league/draft/model changed meanwhile.
-  if (seq !== state.planSeq || state.live !== live || state.model !== model) return;
+  // Drop the result if a newer plan was requested or the league/draft/model
+  // changed meanwhile (a model rebuild always queues a fresh plan).
+  if (seq !== state.planSeq || state.live !== live || state.model !== model) {
+    if (seq === state.planSeq) state.planBusy = false;
+    return;
+  }
   state.planBusy = false;
   if (!result) return;
   const taken = state.taken;
