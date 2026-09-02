@@ -263,7 +263,68 @@ async function sectionReplay() {
   check(top100.every((p) => p.player_id && players[p.player_id]), 'top 100 board players all carry Sleeper ids');
 }
 
-const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay };
+async function sectionSim() {
+  console.log('\n== sim: survival Monte Carlo on the 2025 replay ==');
+  await import('../src/simcore.js');
+  const { buildSimInput } = await import('../src/sim.js');
+  const SimCore = globalThis.SimCore;
+  const league = await getJSON(`https://api.sleeper.app/v1/league/${LEAGUE1}`, 'league1');
+  const draft26 = await getJSON(`https://api.sleeper.app/v1/draft/${DRAFT1}`, 'draft1');
+  const drafts = await getJSON(`https://api.sleeper.app/v1/league/${league.previous_league_id}/drafts`, 'drafts2025');
+  const d25 = drafts.find((x) => x.status === 'complete') || drafts[0];
+  const picks = await getJSON(`https://api.sleeper.app/v1/draft/${d25.draft_id}/picks`, 'picks2025');
+  const players = await loadPlayers();
+  const index = buildPlayerIndex(players);
+  const proj = parseProjections(findDoc(/Projections/i));
+  const rank = parseRankings(findDoc(/rankings-export/i));
+  const model = buildPool({
+    matchProj: matchRows(proj.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
+    matchRank: matchRows(rank.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
+    rankAnalysts: rank.analysts,
+    league,
+    draft: draft26,
+  });
+  const userId = '574323656180514816';
+  const byId = model.byId;
+  const name = (id) => (byId.get(id) ? byId.get(id).name : id);
+
+  // 2026 draft, pick 1 on the clock (slot 1): horizons 20 and 40.
+  const in1 = buildSimInput({ model, picks: [], draft: draft26, userId, taken: new Set(), settings: {}, seed: 42 });
+  check(in1 && in1.horizons.join('/') === '20/40', `2026 pick 1: horizons ${in1 && in1.horizons.join('/')}`);
+  const r1 = SimCore.runSim({ ...in1, N: 400 });
+  console.log(`  2026 pick 1: N=${r1.N}, ${r1.ms} ms, ${in1.players.length} players, ${in1.picks.length} picks simulated`);
+  check(r1.ms < 1500, `sim time ${r1.ms} ms < 1500 ms (desktop; phone budget 1.5 s with adaptive N)`);
+  const top = [...model.pool].sort((a, b) => (a.adp || 999) - (b.adp || 999)).slice(0, 25);
+  console.log('  survival to #20 / #40 for the top 25 by blended rank:');
+  for (const p of top) {
+    const s = r1.survival[p.player_id];
+    console.log(`     ${p.name.padEnd(22)} ${p.pos} adp ${(p.adp || 0).toFixed(1).padStart(5)}  #20 ${(s[0] * 100).toFixed(0).padStart(3)}%  #40 ${(s[1] * 100).toFixed(0).padStart(3)}%`);
+  }
+  const all = Object.values(r1.survival).flat();
+  check(all.every((x) => x >= 0 && x <= 1), 'all survival probabilities in [0,1]');
+  const top5 = top.slice(0, 5).map((p) => r1.survival[p.player_id][0]);
+  check(top5.every((x) => x < 0.5), `top 5 by rank rarely reach #20 (${top5.map((x) => (x * 100).toFixed(0)).join('/')}%)`);
+  const deep = [...model.pool].filter((p) => p.adp > 120).slice(0, 20).map((p) => r1.survival[p.player_id][0]);
+  check(deep.every((x) => x > 0.8), 'players ranked beyond 120 almost always reach #20');
+  const monotone = top.every((p) => r1.survival[p.player_id][1] <= r1.survival[p.player_id][0] + 1e-9);
+  check(monotone, 'survival to #40 never exceeds survival to #20');
+
+  // 2025 replay at pick 37 (user on the clock, slot 4): horizons 44 and 57.
+  const upTo36 = picks.filter((p) => p.pick_no <= 36);
+  const taken = new Set(upTo36.map((p) => String(p.player_id)));
+  const in37 = buildSimInput({ model, picks: upTo36, draft: d25, userId, taken, settings: {}, seed: 7 });
+  check(in37 && in37.horizons.join('/') === '44/57', `2025 pick 37: horizons ${in37 && in37.horizons.join('/')}`);
+  const r37 = SimCore.runSim({ ...in37, N: 400 });
+  console.log(`  2025 pick 37: N=${r37.N}, ${r37.ms} ms, ${in37.picks.length} picks simulated; team counts slot 4 = ${JSON.stringify(in37.teams[4])}`);
+  const avail = model.pool.filter((p) => !taken.has(p.player_id)).sort((a, b) => b.value - a.value).slice(0, 8);
+  for (const p of avail) console.log(`     ${p.name.padEnd(22)} ${p.pos} value ${p.value.toFixed(1).padStart(6)}  #44 ${(r37.survival[p.player_id][0] * 100).toFixed(0).padStart(3)}%  #57 ${(r37.survival[p.player_id][1] * 100).toFixed(0).padStart(3)}%`);
+  check(!Object.keys(r37.survival).some((id) => taken.has(id)), 'taken players are excluded from the sim');
+  // Actual 2025 picks 37..43 should mostly be players the sim considered likely to go (sanity, informational).
+  const between = picks.filter((p) => p.pick_no > 37 && p.pick_no < 44);
+  console.log(`  picks 38-43 in 2025 were: ${between.map((p) => `${name(String(p.player_id))} (#44 surv ${r37.survival[String(p.player_id)] ? (r37.survival[String(p.player_id)][0] * 100).toFixed(0) + '%' : 'n/a'})`).join(', ')}`);
+}
+
+const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim };
 const want = process.argv.slice(2);
 const run = want.length ? want : Object.keys(sections);
 for (const s of run) {

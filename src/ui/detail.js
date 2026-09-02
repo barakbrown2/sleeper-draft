@@ -56,8 +56,9 @@ export function renderDetail(state, p) {
     <h3>Availability</h3>
     <div class="kv">
       <div>At your next turn${s0 ? ` (#${s0.pick})` : ''}</div><div class="${survClass(s0 && s0.p)}">${s0 ? pct(s0.p) : '-'}</div>
-      <div>At the turn after${s1 ? ` (#${s1.pick})` : ''}</div><div class="${survClass(s1 && s1.p)}">${s1 ? pct(s1.p) : '-'}</div>
+      <div>At the turn after${s1 ? ` (#${s1.pick}), if you pass at #${s0 ? s0.pick : '-'} too` : ''}</div><div class="${survClass(s1 && s1.p)}">${s1 ? pct(s1.p) : '-'}</div>
       <div>Best ${esc(p.pos)} likely there at your next turn</div><div>${alt ? `${esc(alt.name)} (${n1(alt.value)})` : state.sim ? 'none above 50%' : '-'}</div>
+      <div>Cost of waiting (value now minus expected best ${esc(p.pos)} at your next turn)</div><div>${p.costOfWaiting != null ? n1(p.costOfWaiting) : '-'}</div>
     </div>
     <h3>Value</h3>
     <div class="kv">

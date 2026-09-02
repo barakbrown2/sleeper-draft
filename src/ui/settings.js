@@ -12,6 +12,7 @@ export function renderSettings(state) {
     filesCard(state),
     unmatchedCard(state),
     valueCard(state),
+    simCard(state),
     playersCard(state),
     debugCard(state),
     dangerCard(),
@@ -303,6 +304,26 @@ function valueCard(state) {
     <p class="muted small">Unmodeled scoring keys (non-zero in this league, no projection data): ${unmodeled}</p>
     <p class="muted small">Pool: ${model.pool.length} scored players${model.rankOnly.length ? `, ${model.rankOnly.length} ranked without projections` : ''}${model.hasK ? ', K included' : ''}${model.hasDef ? ', DEF included' : ''}.</p>
     <button class="btn" data-action="reset-value">Reset scoring and value settings</button>
+  </section>`;
+}
+
+function simCard(state) {
+  if (!state.model || !state.simSettings) return '';
+  const s = state.simSettings;
+  const sim = state.sim;
+  const limits = ['QB', 'RB', 'WR', 'TE']
+    .map((pos) => `<div>${pos} roster max (position limit)</div>${numInput(`sim.positionLimits.${pos}`, s.positionLimits[pos] || '', { step: '1', placeholder: 'none' })}`)
+    .join('');
+  const last = sim ? `Last run: N=${sim.N}, ${sim.ms} ms, ${sim.players} players, horizons #${sim.horizons.join(' / #')}` : state.live ? 'No sim yet (needs a future pick of yours).' : 'Runs once the live loop or a replay is active.';
+  return `<section class="card"><h2>Survival sim</h2>
+    <div class="setgrid">
+      <div>Pick model temperature (tau)</div>${numInput('sim.tau', s.tau, { step: '0.5' })}
+      <div>Late-round tau multiplier</div>${numInput('sim.lateTauMult', s.lateTauMult, { step: '0.1' })}
+      <div>Late rounds start at round</div>${numInput('sim.lateRoundStart', s.lateRoundStart, { step: '1' })}
+      ${limits}
+    </div>
+    <p class="muted small">${esc(last)}. N adapts to keep runs under about 1.2 s; other teams pick with weight exp(-rank / tau) times a roster-need multiplier.</p>
+    <div class="btnrow"><button class="btn" data-action="rerun-sim">Run sim now</button><button class="btn" data-action="reset-sim">Reset sim settings</button></div>
   </section>`;
 }
 

@@ -77,13 +77,11 @@
     const rand = mulberry32(input.seed || 1);
 
     const posIdx = new Int8Array(n);
-    const value = new Float64Array(n);
     const wBase = new Float64Array(n);
     const wLate = new Float64Array(n);
     for (let i = 0; i < n; i++) {
       const p = players[i];
       posIdx[i] = POS_INDEX[p.pos] != null ? POS_INDEX[p.pos] : 6;
-      value[i] = p.value != null ? p.value : -999;
       const adp = p.adp != null ? p.adp : 999;
       wBase[i] = Math.exp(-adp / tau);
       wLate[i] = Math.exp(-adp / (tau * lateMult));
@@ -99,7 +97,6 @@
     }
 
     const survive = new Float64Array(H * n);
-    const takenBy = new Float64Array(n); // how often each player was taken before horizon 1 (diagnostic)
     const counts = new Int16Array(base.length);
     const taken = new Uint8Array(n);
     const weights = new Float64Array(n);
@@ -119,22 +116,10 @@
         const slot = pk.slot;
         const cOff = slot * 7;
         let chosen = -1;
-        if (slot === userSlot) {
-          // Greedy: best value times need.
-          let best = -Infinity;
-          for (let i = 0; i < n; i++) {
-            if (taken[i]) continue;
-            const pi = posIdx[i];
-            if (pi > 5) continue;
-            const nm = needMult(counts[cOff + pi], POS_NAMES[pi], rc, pk.round);
-            if (nm <= 0) continue;
-            const v = value[i] * (value[i] >= 0 ? nm : 1 / nm);
-            if (v > best) {
-              best = v;
-              chosen = i;
-            }
-          }
-        } else {
+        // The user's own picks are no-ops: survival answers "if I pass on
+        // this player at every one of my turns, do the OTHER teams leave him
+        // for me?" That is the question the board needs at each horizon.
+        if (slot !== userSlot) {
           const late = pk.round >= lateStart;
           const w = late ? wLate : wBase;
           let total = 0;
@@ -168,7 +153,6 @@
           taken[chosen] = 1;
           const pi = posIdx[chosen];
           if (pi <= 5) counts[cOff + pi]++;
-          if (h === 0) takenBy[chosen] += 1;
         }
       }
       // Horizons beyond the simulated picks (draft ends first) count as survived.

@@ -233,6 +233,21 @@ body.noscroll {
 .legend {
   padding: 0 4px 8px;
 }
+.tag {
+  display: inline-block;
+  font-size: 15px;
+  font-weight: 600;
+  border-radius: 6px;
+  padding: 0 6px;
+}
+.tag.gone {
+  color: var(--red);
+  background: color-mix(in srgb, var(--red) 15%, transparent);
+}
+.tag.wait {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 15%, transparent);
+}
 .banner {
   background: var(--amber);
   color: #000;

@@ -14,6 +14,8 @@ import { renderDraftLog, teamName } from './ui/draftlog.js';
 import { renderTeam } from './ui/team.js';
 import { renderDetail } from './ui/detail.js';
 import { checkForUpdate, VERSION } from './update.js';
+import { SimClient, buildSimInput, DEFAULT_SIM_SETTINGS } from './sim.js';
+import { esc as escHtml } from './ui/dom.js';
 
 const DEFAULT_SETTINGS = {
   v: 1,
@@ -25,6 +27,7 @@ const DEFAULT_SETTINGS = {
   value: {},
   cvs: {},
   fumbles: {},
+  sim: {},
 };
 
 const TABS = [
@@ -71,7 +74,11 @@ export const state = {
   live: null,
   detailId: null,
   sim: null,
+  simClient: null,
+  simSettings: null,
+  simSeq: 0,
   banner: '',
+  waitOn: null,
   version: VERSION,
   busy: {},
   log: [],
@@ -259,6 +266,8 @@ function effectiveSettings() {
   };
   state.cvs = { ...DEFAULT_CVS, ...(s.cvs || {}) };
   state.fumbles = { ...DEFAULT_FUMBLES, ...(s.fumbles || {}) };
+  const ss = s.sim || {};
+  state.simSettings = { ...DEFAULT_SIM_SETTINGS, ...ss, positionLimits: { ...(ss.positionLimits || {}) } };
 }
 
 function setSetting(path, raw) {
@@ -323,6 +332,90 @@ export function rebuild() {
       toast(`Value model failed: ${e.message}`);
     }
   }
+  if (state.live) runSim('model');
+}
+
+// ---- survival sim (plan section 7) and the signals derived from it ----
+async function runSim(reason) {
+  const live = state.live;
+  if (!live || !state.model || !state.simClient) {
+    state.sim = null;
+    return;
+  }
+  const input = buildSimInput({
+    model: state.model,
+    picks: live.picks,
+    draft: live.draft,
+    userId: currentUserId(),
+    taken: state.taken,
+    settings: state.simSettings,
+    seed: (Date.now() ^ (live.picks.length * 7919)) & 0x7fffffff,
+  });
+  if (!input) {
+    state.sim = null;
+    deriveSignals();
+    return;
+  }
+  if (state.sim) state.sim.stale = true;
+  const seq = ++state.simSeq;
+  const result = await state.simClient.run(input);
+  if (!result || seq !== state.simSeq) return; // superseded
+  state.sim = { survival: result.survival, horizons: result.horizons, horizonsInfo: input.horizonsInfo, N: result.N, ms: result.ms, at: Date.now(), stale: false, players: input.players.length };
+  log(`sim (${reason}): N=${result.N} ${result.ms} ms, ${input.picks.length} picks to #${result.horizons[result.horizons.length - 1]}`);
+  deriveSignals();
+  if (state.tab === 'board' || state.detailId) render();
+}
+
+// QB-run banner + per-position "you can wait on X" + cost of waiting.
+function deriveSignals() {
+  state.banner = '';
+  state.waitOn = null;
+  const live = state.live;
+  if (!live || !state.model) return;
+  const picks = live.picks;
+  const last5 = picks.slice(-5);
+  const qbs = last5.filter((p) => p.metadata && p.metadata.position === 'QB').length;
+  const msgs = [];
+  if (last5.length === 5 && qbs >= 3) msgs.push(`QB run: ${qbs} of the last 5 picks were QBs.`);
+  const sim = state.sim;
+  const taken = state.taken;
+  if (sim && sim.survival) {
+    const avail = state.model.pool.filter((p) => !taken.has(p.player_id));
+    // Expected best value per position at the next turn, assuming independent survival.
+    const expBest = {};
+    const byPos = {};
+    for (const p of avail) (byPos[p.pos] = byPos[p.pos] || []).push(p);
+    const waitOn = {};
+    for (const pos in byPos) {
+      const list = byPos[pos].sort((a, b) => b.value - a.value);
+      let remainProb = 1;
+      let exp = 0;
+      let best = null;
+      for (const p of list) {
+        const s = sim.survival[p.player_id];
+        const sp = s ? s[0] : 0;
+        exp += p.value * sp * remainProb;
+        remainProb *= 1 - sp;
+        if (!best && sp >= 0.5) best = { player: p, p: sp };
+        if (remainProb < 0.001) break;
+      }
+      expBest[pos] = exp;
+      if (best) waitOn[pos] = best;
+    }
+    for (const p of avail) p.costOfWaiting = expBest[p.pos] != null ? p.value - expBest[p.pos] : null;
+    state.waitOn = waitOn;
+    // Last QB in the current top tier likely gone before the user's next turn.
+    const qbList = (byPos.QB || []).sort((a, b) => b.value - a.value);
+    if (qbList.length) {
+      const tier = qbList[0].tier;
+      const tierQBs = qbList.filter((q) => q.tier === tier);
+      const lastQB = tierQBs[tierQBs.length - 1];
+      const s = sim.survival[lastQB.player_id];
+      if (s && s[0] < 0.4 && !live.turn.isUserTurn) msgs.push(`QB tier ${tier} is emptying: ${lastQB.name} has ${Math.round(s[0] * 100)}% to reach your pick #${sim.horizons[0]}.`);
+      else if (s && s[0] < 0.4 && live.turn.isUserTurn) msgs.push(`QB tier ${tier} will not last to #${sim.horizons[0]}: ${lastQB.name} ${Math.round(s[0] * 100)}%.`);
+    }
+  }
+  if (msgs.length) state.banner = `<div class="banner">${msgs.map((m) => escHtml(m)).join('<br>')}</div>`;
 }
 
 // ---- live loop / replay ----
@@ -333,6 +426,9 @@ function stopLive() {
   }
   state.live = null;
   state.taken = new Set();
+  state.sim = null;
+  state.banner = '';
+  state.waitOn = null;
 }
 
 function makeLive(mode, source, draft, extra = {}) {
@@ -447,7 +543,9 @@ function applyPicks({ picks, fresh, changed, reason, draft }) {
       log(`${fresh.length} new pick(s) via ${reason}: ${last.join(', ')}`);
     }
     if (live.turn.isUserTurn && !wasTurn && picks.length) toast(`Your pick: #${live.turn.current}`, 'info', 4000);
+    deriveSignals();
     render();
+    runSim(reason);
   } else {
     renderHeaderOnly();
   }
@@ -530,6 +628,15 @@ const actions = {
     saveSettings();
     rebuild();
     render();
+  },
+  'reset-sim'() {
+    state.settings.sim = {};
+    saveSettings();
+    rebuild();
+    render();
+  },
+  'rerun-sim'() {
+    runSim('manual');
   },
   'remove-file'(btn) {
     const k = btn.dataset.file;
@@ -753,6 +860,7 @@ async function init() {
   if (state.settings.userId) state.user = { user_id: state.settings.userId, username: state.settings.username };
   loadFiles();
   bindEvents();
+  state.simClient = new SimClient({ log });
   rebuild();
   if (state.bundle && state.bundle.draft) startLive();
   render();
