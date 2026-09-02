@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Draft Assistant</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Draft">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="stylesheet" href="./src/ui/app.css">
+</head>
+<body>
+<div id="app">
+  <header id="header"></header>
+  <main id="screen"><div class="placeholder">Loading</div></main>
+  <nav id="tabbar" role="tablist"></nav>
+  <div id="toast" hidden></div>
+</div>
+<noscript>This app needs JavaScript.</noscript>
+<script type="module" src="./src/app.js"></script>
+</body>
+</html>
