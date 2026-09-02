@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-02T22:47:00.829Z",
+  "generated": "2026-09-02T22:55:49.061Z",
   "files": [
     {
       "kind": "projections",
@@ -8,6 +8,14 @@
       "mtime": "2026-09-02T21:40:52.384Z",
       "size": 33066,
       "rows": 442
+    },
+    {
+      "kind": "rankings1qb",
+      "file": "docs/nfl-rankings-export (7).csv",
+      "name": "nfl-rankings-export (7).csv",
+      "mtime": "2026-09-02T22:54:43.860Z",
+      "size": 14429,
+      "rows": 385
     },
     {
       "kind": "rankingsSuperflex",

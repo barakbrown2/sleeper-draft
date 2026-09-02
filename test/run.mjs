@@ -37,6 +37,23 @@ function findDoc(re) {
   return fs.readFileSync(path.join(docs, f), 'utf8');
 }
 
+// All rankings exports in docs/, parsed, keyed by detected format.
+function rankingsDocs() {
+  const out = [];
+  for (const f of fs.readdirSync(docs)) {
+    if (!/rankings-export/i.test(f)) continue;
+    const parsed = parseRankings(fs.readFileSync(path.join(docs, f), 'utf8'));
+    out.push({ file: f, parsed });
+  }
+  return out;
+}
+
+function rankingsByFormat(format) {
+  const hit = rankingsDocs().find((r) => r.parsed.format === format);
+  if (!hit) throw new Error(`no ${format} rankings export in docs/`);
+  return hit.parsed;
+}
+
 export async function loadPlayers() {
   const cache = path.join(os.tmpdir(), 'sleeper-draft-players.json');
   try {
@@ -66,13 +83,14 @@ async function sectionMatch() {
   const players = await loadPlayers();
   const index = buildPlayerIndex(players);
   const proj = parseProjections(findDoc(/Projections/i));
-  const rank = parseRankings(findDoc(/rankings-export/i));
+  const rankDocs = rankingsDocs();
+  const rank = rankingsByFormat('superflex');
   console.log(`  projections: ${proj.count} rows ${JSON.stringify(proj.counts)} warnings=${JSON.stringify(proj.warnings)}`);
-  console.log(`  rankings: ${rank.count} rows, analysts=${rank.analysts.join('/')}, duplicates merged=${rank.duplicates.length} (${rank.duplicates.join(', ')}), format=${rank.format}`);
-  for (const [label, rows] of [
-    ['projections', proj.rows],
-    ['rankings', rank.rows],
-  ]) {
+  for (const r of rankDocs) console.log(`  rankings ${r.file}: ${r.parsed.count} rows, analysts=${r.parsed.analysts.join('/')}, duplicates merged=${r.parsed.duplicates.length} (${r.parsed.duplicates.join(', ')}), format=${r.parsed.format}`);
+  check(rankDocs.some((r) => r.parsed.format === 'superflex') && rankDocs.some((r) => r.parsed.format === '1qb'), 'docs/ has one superflex and one 1QB rankings export, formats detected');
+  const sets = [['projections', proj.rows]];
+  for (const r of rankDocs) sets.push([`rankings ${r.parsed.format}`, r.parsed.rows]);
+  for (const [label, rows] of sets) {
     const skill = rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos));
     const kd = rows.filter((r) => ['K', 'DEF'].includes(r.pos));
     const a = matchRows(skill, index);
@@ -169,7 +187,7 @@ async function sectionFixture() {
   console.log('\n== value: baselines, VORP, blend, tiers ==');
   const players = await loadPlayers();
   const index = buildPlayerIndex(players);
-  const rank = parseRankings(findDoc(/rankings-export/i));
+  const rank = rankingsByFormat('superflex');
   const model = buildPool({
     matchProj: matchRows(proj.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
     matchRank: matchRows(rank.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
@@ -249,7 +267,7 @@ async function sectionReplay() {
   const players = await loadPlayers();
   const index = buildPlayerIndex(players);
   const proj = parseProjections(findDoc(/Projections/i));
-  const rank = parseRankings(findDoc(/rankings-export/i));
+  const rank = rankingsByFormat('superflex');
   const model = buildPool({
     matchProj: matchRows(proj.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
     matchRank: matchRows(rank.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
@@ -276,7 +294,7 @@ async function sectionSim() {
   const players = await loadPlayers();
   const index = buildPlayerIndex(players);
   const proj = parseProjections(findDoc(/Projections/i));
-  const rank = parseRankings(findDoc(/rankings-export/i));
+  const rank = rankingsByFormat('superflex');
   const model = buildPool({
     matchProj: matchRows(proj.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
     matchRank: matchRows(rank.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
@@ -324,7 +342,49 @@ async function sectionSim() {
   console.log(`  picks 38-43 in 2025 were: ${between.map((p) => `${name(String(p.player_id))} (#44 surv ${r37.survival[String(p.player_id)] ? (r37.survival[String(p.player_id)][0] * 100).toFixed(0) + '%' : 'n/a'})`).join(', ')}`);
 }
 
-const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim };
+const LEAGUE2 = '1389345938123804672';
+const DRAFT2 = '1389345938123804673';
+
+async function sectionLeague2() {
+  console.log('\n== league2: Deep Cuts (16-team 1QB, 6-pt pass TD, TE premium, bonuses) ==');
+  const league = await getJSON(`https://api.sleeper.app/v1/league/${LEAGUE2}`, 'league2');
+  const draft = await getJSON(`https://api.sleeper.app/v1/draft/${DRAFT2}`, 'draft2');
+  const scoring = league.scoring_settings;
+  const players = await loadPlayers();
+  const index = buildPlayerIndex(players);
+  const proj = parseProjections(findDoc(/Projections/i));
+  const rank = rankingsByFormat('1qb');
+  const skill = (rows) => rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos));
+  const model = buildPool({ matchProj: matchRows(skill(proj.rows), index), matchRank: matchRows(skill(rank.rows), index), rankAnalysts: rank.analysts, league, draft });
+  console.log(`  roster ${league.roster_positions.join(',')}; teams ${model.teams}; K ${model.hasK} DEF ${model.hasDef}`);
+  console.log(`  baselines ${JSON.stringify(model.baselines)}, baseline pts ${JSON.stringify(Object.fromEntries(Object.entries(model.baselinePts).map(([k, v]) => [k, +v.toFixed(1)])))}`);
+  console.log(`  weights ${JSON.stringify(model.weights)}`);
+  console.log(`  unmodeled keys: ${model.unmodeled.map((k) => `${k.key}=${k.value}`).join(', ') || 'none'}`);
+  check(model.baselines.QB === 16 && model.baselines.RB === 51 && model.baselines.WR === 44 && model.baselines.TE === 19, `baselines QB16 / RB51 / WR44 / TE19 (got ${JSON.stringify(model.baselines)})`);
+  check(Math.abs(model.weights.Ratcliffe - 0.55) < 1e-9 && Math.abs(model.weights.Herms - 0.15) < 1e-9, 'analyst weights Ratcliffe 0.55, others 0.15');
+  check(!model.hasK && !model.hasDef && model.pool.every((p) => ['QB', 'RB', 'WR', 'TE'].includes(p.pos)), 'no K/DEF in the Deep Cuts pool');
+  // Scoring spot checks under this league's keys.
+  const row = (name) => proj.rows.find((r) => r.name === name);
+  const allen = scoreRow(row('Josh Allen'), scoring);
+  const allenNoBonus = scoreRow(row('Josh Allen'), { ...scoring, bonus_pass_yd_300: 0, bonus_pass_yd_400: 0 });
+  console.log(`  Josh Allen: base ${allen.base.toFixed(1)} (25.5 pass TD x 6 = 153.0 included), pass bonus ${(allen.total - allenNoBonus.total).toFixed(2)}, fumbles ${allen.fumPts.toFixed(2)}, total ${allen.total.toFixed(1)}`);
+  check(Math.abs(allen.base - (3743.5 * 0.04 + 25.5 * 6 - 11.5 * 1 + 540.5 * 0.1 + 11.2 * 6)) < 0.01, 'Allen base uses 6-pt pass TD and -1 INT');
+  const bowers = scoreRow(row('Brock Bowers'), scoring);
+  const bowersNoPrem = scoreRow(row('Brock Bowers'), { ...scoring, bonus_rec_te: 0 });
+  check(Math.abs(bowers.total - bowersNoPrem.total - 0.5 * 93.7) < 0.01, `TE premium adds 0.5 x 93.7 receptions = ${(bowers.total - bowersNoPrem.total).toFixed(2)} for Bowers`);
+  const taylor = scoreRow(row('Jonathan Taylor'), scoring);
+  const att = taylor.bonuses.find((b) => b.key === 'bonus_rush_att_20');
+  console.log(`  Jonathan Taylor bonuses: ${taylor.bonuses.map((b) => `${b.key}=${b.pts.toFixed(2)}`).join(', ')}`);
+  check(att && att.pts > 3 && att.pts < 12, `rush_att_20 bonus modeled for Taylor (${att ? att.pts.toFixed(2) : 'missing'} pts)`);
+  const top = [...model.pool].sort((a, b) => b.value - a.value).slice(0, 12);
+  console.log('  top 12 by blended value (Deep Cuts):');
+  for (const p of top) console.log(`     ${String(p.valueRank).padStart(2)} ${p.name.padEnd(22)} ${p.pos} pts ${p.lgPts.toFixed(1)} vorp ${p.vorpProj.toFixed(1)} rank ${p.blendedRank == null ? '-' : p.blendedRank.toFixed(1)} value ${p.value.toFixed(1)} tier ${p.tier}`);
+  const qbTop = model.pool.filter((p) => p.pos === 'QB').sort((a, b) => b.value - a.value)[0];
+  console.log(`  best QB: ${qbTop.name} value ${qbTop.value.toFixed(1)} (overall #${qbTop.valueRank})`);
+  check(top.every((p) => p.pos !== 'QB'), '1QB: no QB in the top 12 by value');
+}
+
+const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim, league2: sectionLeague2 };
 const want = process.argv.slice(2);
 const run = want.length ? want : Object.keys(sections);
 for (const s of run) {
