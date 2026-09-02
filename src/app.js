@@ -2,8 +2,12 @@
 import * as api from './api.js';
 import { KEYS, loadJSON, saveJSON, migrate, clearAll } from './storage.js';
 import { parseProjections, parseRankings, buildPlayerIndex, matchRows, searchPlayers } from './csv.js';
+import { buildPool } from './model.js';
+import { DEFAULT_VALUE_SETTINGS } from './value.js';
+import { DEFAULT_CVS, DEFAULT_FUMBLES } from './scoring.js';
 import { esc, $ } from './ui/dom.js';
 import { renderSettings, renderFixResults } from './ui/settings.js';
+import { renderBoard } from './ui/board.js';
 
 const DEFAULT_SETTINGS = {
   v: 1,
@@ -12,6 +16,9 @@ const DEFAULT_SETTINGS = {
   leagueId: null,
   nameOverrides: {},
   rankingsFileByLeague: {},
+  value: {},
+  cvs: {},
+  fumbles: {},
 };
 
 const TABS = [
@@ -45,6 +52,13 @@ export const state = {
   activeRankingsKey: null,
   match: null,
   fixing: null,
+  model: null,
+  valueSettings: null,
+  cvs: null,
+  fumbles: null,
+  taken: new Set(),
+  boardFilter: 'ALL',
+  boardLimit: 12,
   busy: {},
   log: [],
 };
@@ -92,6 +106,7 @@ export function render() {
   $('header').innerHTML = renderHeader();
   const screen = $('screen');
   if (state.tab === 'settings') screen.innerHTML = renderSettings(state);
+  else if (state.tab === 'board') screen.innerHTML = renderBoard(state);
   else screen.innerHTML = renderPlaceholder(state.tab);
   $('tabbar').innerHTML = TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" aria-selected="${state.tab === id}">${label}</button>`).join('');
 }
@@ -152,10 +167,51 @@ function leaguePositions() {
   return pos;
 }
 
-// Re-match CSV rows to Sleeper players. Cheap (a few ms); runs after any
-// file, league, override, or player-map change. Scoring/values hook in here later.
+// Effective scoring/value settings = defaults overlaid with the user's edits.
+function effectiveSettings() {
+  const s = state.settings;
+  const dv = DEFAULT_VALUE_SETTINGS;
+  const sv = s.value || {};
+  const flexShare = {};
+  for (const ft in dv.flexShare) flexShare[ft] = { ...dv.flexShare[ft], ...((sv.flexShare && sv.flexShare[ft]) || {}) };
+  state.valueSettings = {
+    ...dv,
+    ...sv,
+    flexShare,
+    cushion: { ...dv.cushion, ...(sv.cushion || {}) },
+    baselineOverrides: { ...(sv.baselineOverrides || {}) },
+    analystOverrides: { ...(sv.analystOverrides || {}) },
+  };
+  state.cvs = { ...DEFAULT_CVS, ...(s.cvs || {}) };
+  state.fumbles = { ...DEFAULT_FUMBLES, ...(s.fumbles || {}) };
+}
+
+function setSetting(path, raw) {
+  const parts = path.split('.');
+  let obj = state.settings;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!obj[parts[i]] || typeof obj[parts[i]] !== 'object') obj[parts[i]] = {};
+    obj = obj[parts[i]];
+  }
+  const leaf = parts[parts.length - 1];
+  if (raw === '' || raw == null) delete obj[leaf];
+  else {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return;
+    obj[leaf] = n;
+  }
+  saveSettings();
+  rebuild();
+  render();
+}
+
+// Re-match CSV rows to Sleeper players and rebuild the scored/valued pool.
+// Cheap (tens of ms); runs after any file, league, setting, override, or
+// player-map change.
 export function rebuild() {
+  effectiveSettings();
   state.activeRankingsKey = activeRankingsKey();
+  state.model = null;
   if (!state.players || !state.playerIndex) {
     state.match = null;
     return;
@@ -175,6 +231,23 @@ export function rebuild() {
     hasRank: !!rank,
   };
   log(`match: proj ${state.match.proj.matched.length}/${projRows.length} (${state.match.proj.unmatched.length} unmatched), rank ${state.match.rank.matched.length}/${rankRows.length} (${state.match.rank.unmatched.length} unmatched)`);
+  if (state.bundle && proj) {
+    const t0 = performance.now();
+    try {
+      state.model = buildPool({
+        matchProj: state.match.proj,
+        matchRank: state.match.rank,
+        rankAnalysts: rank ? rank.analysts : [],
+        league: state.bundle.league,
+        draft: state.bundle.draft,
+        settings: { value: state.valueSettings, cvs: state.cvs, fumbles: state.fumbles },
+      });
+      log(`model: ${state.model.pool.length} players, baselines ${JSON.stringify(state.model.baselines)}, ${Math.round(performance.now() - t0)} ms`);
+    } catch (e) {
+      log(`model failed: ${e.message}`);
+      toast(`Value model failed: ${e.message}`);
+    }
+  }
 }
 
 // ---- actions ----
@@ -232,6 +305,23 @@ const actions = {
   },
   'reset-overrides'() {
     state.settings.nameOverrides = {};
+    saveSettings();
+    rebuild();
+    render();
+  },
+  'board-filter'(btn) {
+    state.boardFilter = btn.dataset.pos;
+    state.boardLimit = 12;
+    render();
+  },
+  'board-more'() {
+    state.boardLimit = (state.boardLimit || 12) + 24;
+    render();
+  },
+  'reset-value'() {
+    state.settings.value = {};
+    state.settings.cvs = {};
+    state.settings.fumbles = {};
     saveSettings();
     rebuild();
     render();
@@ -297,6 +387,8 @@ function bindEvents() {
         log(`upload failed: ${err.message}`);
         toast(`Upload failed: ${err.message}`);
       });
+    } else if (input.matches('[data-setting]')) {
+      setSetting(input.dataset.setting, input.value);
     } else if (input.matches('select[data-select="rankingsFile"]')) {
       const v = input.value;
       if (v === 'auto') delete state.settings.rankingsFileByLeague[state.leagueId];

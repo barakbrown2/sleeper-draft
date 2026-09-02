@@ -352,3 +352,102 @@ input[type='file'] {
   color: var(--muted);
   padding: 40px 12px;
 }
+
+.chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0 10px;
+  -webkit-overflow-scrolling: touch;
+}
+.chip {
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-weight: 600;
+  font-size: 15px;
+}
+.chip[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.card.list {
+  padding: 0 12px;
+}
+.prow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.prow:first-child {
+  border-top: 0;
+}
+.prow .grow {
+  flex: 1;
+  min-width: 0;
+}
+.tier {
+  flex: 0 0 34px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--card2);
+  border-radius: 8px;
+  padding: 6px 0;
+}
+.pname {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.psub {
+  font-size: 15px;
+  color: var(--muted);
+}
+.pnums {
+  text-align: right;
+  flex: 0 0 auto;
+}
+.pnums .big {
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.inj {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--red);
+  border-radius: 6px;
+  padding: 1px 5px;
+  vertical-align: middle;
+}
+.setgrid {
+  display: grid;
+  grid-template-columns: 1fr 96px;
+  gap: 6px 10px;
+  align-items: center;
+  font-size: 15px;
+}
+.setgrid input {
+  min-height: 40px;
+  padding: 4px 8px;
+  text-align: right;
+}
+details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  font-weight: 600;
+  cursor: pointer;
+}

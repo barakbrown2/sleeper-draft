@@ -1,6 +1,6 @@
 // src/ui/settings.js - Settings screen: connection, league picker, files,
 // name matching, player map, debug log.
-import { esc, fmtDateTime, fmtAgo, posClass } from './dom.js';
+import { esc, fmtDateTime, fmtAgo, posClass, n1 } from './dom.js';
 import { draftConfig, userSlot, picksForSlot, groupTurns } from '../draft.js';
 
 export function renderSettings(state) {
@@ -10,6 +10,7 @@ export function renderSettings(state) {
     state.bundle ? leagueSummaryCard(state) : '',
     filesCard(state),
     unmatchedCard(state),
+    valueCard(state),
     playersCard(state),
     debugCard(state),
     dangerCard(),
@@ -210,6 +211,61 @@ export function renderFixResults(state) {
     </button>`,
     )
     .join('');
+}
+
+function numInput(path, value, { step = 'any', placeholder = '' } = {}) {
+  return `<input type="number" inputmode="decimal" step="${step}" data-setting="${esc(path)}" value="${value == null ? '' : esc(value)}" placeholder="${esc(placeholder)}">`;
+}
+
+function valueCard(state) {
+  const model = state.model;
+  if (!model) return '';
+  const v = state.valueSettings;
+  const cvs = state.cvs;
+  const fum = state.fumbles;
+  const baseRows = Object.keys(model.baselines)
+    .map((pos) => {
+      const ov = v.baselineOverrides && v.baselineOverrides[pos];
+      return `<div>${pos} baseline rank <span class="muted">(${pos}${model.baselines[pos]} = ${n1(model.baselinePts[pos])} pts)</span></div>${numInput(`value.baselineOverrides.${pos}`, ov || '', { step: '1', placeholder: String(model.baselines[pos]) })}`;
+    })
+    .join('');
+  const wRows = Object.keys(model.weights)
+    .map((a) => `<div>${esc(a)} weight</div>${numInput(`value.analystOverrides.${a}`, v.analystOverrides && v.analystOverrides[a] != null ? v.analystOverrides[a] : '', { step: '0.05', placeholder: model.weights[a].toFixed(2) })}`)
+    .join('');
+  const cvRows = Object.keys(cvs)
+    .map((k) => `<div>CV ${k}</div>${numInput(`cvs.${k}`, cvs[k], { step: '0.05' })}`)
+    .join('');
+  const shareRows = Object.keys(v.flexShare)
+    .filter((ft) => (state.bundle.league.roster_positions || []).includes(ft))
+    .flatMap((ft) => Object.keys(v.flexShare[ft]).map((pos) => `<div>${esc(ft.replace('SUPER_FLEX', 'SF'))} share to ${pos}</div>${numInput(`value.flexShare.${ft}.${pos}`, v.flexShare[ft][pos], { step: '0.05' })}`))
+    .join('');
+  const cushionRows = ['QB', 'RB', 'WR', 'TE']
+    .map((pos) => `<div>${pos} cushion</div>${numInput(`value.cushion.${pos}`, v.cushion[pos] || 0, { step: '1' })}`)
+    .join('');
+  const unmodeled = model.unmodeled.length ? model.unmodeled.map((k) => `${esc(k.key)} (${k.value})`).join(', ') : 'none';
+  return `<section class="card"><h2>Scoring and value</h2>
+    <div class="setgrid">
+      <div>Projection weight (w_proj)</div>${numInput('value.wProj', v.wProj, { step: '0.05' })}
+      ${baseRows}
+      ${wRows}
+    </div>
+    <details>
+      <summary>Advanced</summary>
+      <div class="setgrid">
+        ${cvRows}
+        <div>QB fumbles lost per 500 att</div>${numInput('fumbles.qbPer500Att', fum.qbPer500Att, { step: '0.1' })}
+        <div>RB/WR/TE fumbles lost per 250 touches</div>${numInput('fumbles.skillPer250Touches', fum.skillPer250Touches, { step: '0.1' })}
+        ${shareRows}
+        ${cushionRows}
+        <div>Tier min gap (pts)</div>${numInput('value.tierMinGap', v.tierMinGap, { step: '0.5' })}
+        <div>Tier gap multiple of median</div>${numInput('value.tierGapMult', v.tierGapMult, { step: '0.1' })}
+      </div>
+      <p class="muted small">Baseline rank = floor(teams x (dedicated slots + flex share)) + cushion. Blank override = computed.</p>
+    </details>
+    <p class="muted small">Unmodeled scoring keys (non-zero in this league, no projection data): ${unmodeled}</p>
+    <p class="muted small">Pool: ${model.pool.length} scored players${model.rankOnly.length ? `, ${model.rankOnly.length} ranked without projections` : ''}${model.hasK ? ', K included' : ''}${model.hasDef ? ', DEF included' : ''}.</p>
+    <button class="btn" data-action="reset-value">Reset scoring and value settings</button>
+  </section>`;
 }
 
 function playersCard(state) {
