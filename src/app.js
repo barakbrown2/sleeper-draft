@@ -72,6 +72,7 @@ export const state = {
   draftFilter: 'ALL',
   draftSort: 'pick',
   live: null,
+  userDrafts: [],
   detailId: null,
   sim: null,
   simClient: null,
@@ -135,7 +136,15 @@ function renderHeader() {
   }
   const t = live.turn;
   const cfg = t.cfg;
-  const badge = live.mode === 'replay' ? `<span class="badge">REPLAY ${esc(live.replay.season)} ${live.source.n}/${live.source.total}</span>` : live.errors > 1 ? '<span class="badge bad">offline?</span>' : '';
+  const attachedName = live.attached ? (live.draft.metadata && live.draft.metadata.name ? live.draft.metadata.name : live.draft.draft_id) : '';
+  const badge =
+    live.mode === 'replay'
+      ? `<span class="badge">REPLAY ${esc(live.replay.season)} ${live.source.n}/${live.source.total}</span>`
+      : live.attached
+        ? `<span class="badge">ATTACHED ${esc(attachedName)}</span>`
+        : live.errors > 1
+          ? '<span class="badge bad">offline?</span>'
+          : '';
   let main;
   let sub;
   if (t.complete) {
@@ -469,6 +478,33 @@ function startLive() {
   log(`live loop started for draft ${d.draft_id} (${d.status})`);
 }
 
+// Attach the live loop to any draft id (a Sleeper mock draft, for the
+// end-to-end test in plan section 13). Values keep using the selected
+// league's scoring and roster; turn detection uses the attached draft's order.
+async function attachDraft(draftId) {
+  const id = String(draftId || '')
+    .trim()
+    .replace(/\D/g, '');
+  if (!id) return;
+  state.busy.attach = `Loading draft ${id}`;
+  render();
+  try {
+    const d = await api.getDraft(id);
+    if (!d || !d.draft_id) throw new Error('draft not found');
+    stopLive();
+    makeLive('live', new LiveSource(d.draft_id), d, { attached: true });
+    const slot = userSlot(d, currentUserId());
+    log(`attached to draft ${d.draft_id} (${d.metadata && d.metadata.name ? d.metadata.name : d.type}, ${d.status}), your slot ${slot == null ? 'unknown' : slot}`);
+    if (slot == null) toast('You are not in this draft order yet; turn detection starts once the order is set.', 'info', 6000);
+    state.tab = 'board';
+  } catch (e) {
+    log(`attach failed: ${e.message}`);
+    toast(`Could not attach: ${e.message}`);
+  }
+  state.busy.attach = null;
+  render();
+}
+
 async function startReplay() {
   const league = state.bundle && state.bundle.league;
   const prev = league && league.previous_league_id;
@@ -701,6 +737,29 @@ const actions = {
     startLive();
     render();
   },
+  async 'find-drafts'() {
+    const uid = currentUserId();
+    if (!uid) return;
+    state.busy.drafts = 'Loading your drafts';
+    render();
+    try {
+      const list = await api.getUserDrafts(uid, state.season || new Date().getFullYear());
+      const leagueDraftId = state.bundle && state.bundle.draft ? state.bundle.draft.draft_id : null;
+      state.userDrafts = (list || []).filter((d) => d.draft_id !== leagueDraftId);
+      log(`user drafts this season: ${(list || []).length}`);
+    } catch (e) {
+      toast(`Drafts lookup failed: ${e.message}`);
+    }
+    state.busy.drafts = null;
+    render();
+  },
+  async 'attach-draft'(btn) {
+    await attachDraft(btn.dataset.id);
+  },
+  'detach-draft'() {
+    startLive();
+    render();
+  },
 };
 
 function setOverride(key, value) {
@@ -717,6 +776,9 @@ const forms = {
     state.settings.username = v;
     saveSettings();
     await actions.recheck();
+  },
+  async attach(form) {
+    await attachDraft(new FormData(form).get('draftId'));
   },
 };
 
@@ -820,7 +882,8 @@ async function refreshLeague() {
   // (Re)start the live loop unless a replay is running or the same draft is already live.
   const d = state.bundle && state.bundle.draft;
   const sameDraft = state.live && state.live.mode === 'live' && d && state.live.draft && state.live.draft.draft_id === d.draft_id;
-  if (d && !sameDraft && !(state.live && state.live.mode === 'replay')) startLive();
+  const busyElsewhere = state.live && (state.live.mode === 'replay' || state.live.attached);
+  if (d && !sameDraft && !busyElsewhere) startLive();
   render();
 }
 

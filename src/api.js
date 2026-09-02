@@ -44,6 +44,7 @@ export async function get(path, { timeoutMs = 10000 } = {}) {
 // ---- Endpoints (plan section 2) ----
 export const getUser = (username) => get(`/user/${encodeURIComponent(username)}`);
 export const getUserLeagues = (userId, season) => get(`/user/${userId}/leagues/nfl/${season}`);
+export const getUserDrafts = (userId, season) => get(`/user/${userId}/drafts/nfl/${season}`);
 export const getLeague = (leagueId) => get(`/league/${leagueId}`);
 export const getLeagueUsers = (leagueId) => get(`/league/${leagueId}/users`);
 export const getLeagueRosters = (leagueId) => get(`/league/${leagueId}/rosters`);

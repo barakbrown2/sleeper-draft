@@ -157,9 +157,25 @@ function liveCard(state) {
       <div>Fetch errors</div><div>${live.errors}</div>
     </div>
     <button class="btn" data-action="live-refresh">Refresh now</button>`;
+  const draftRows = (state.userDrafts || [])
+    .map(
+      (x) => `<button class="league-opt" data-action="attach-draft" data-id="${esc(x.draft_id)}">
+      <div class="name">${esc(x.metadata && x.metadata.name ? x.metadata.name : x.type)}</div>
+      <div class="sub">${esc(x.status)} - ${x.settings ? `${x.settings.teams} teams, ${x.settings.rounds} rounds` : ''} - ${esc(x.draft_id)}</div>
+    </button>`,
+    )
+    .join('');
+  const attached = live && live.attached ? `<p>Attached to <b>${esc(live.draft.metadata && live.draft.metadata.name ? live.draft.metadata.name : live.draft.draft_id)}</b>. <button class="btn" data-action="detach-draft">Back to league draft</button></p>` : '';
+  const attach = `<h3>Other drafts (mock draft test)</h3>${attached}
+    ${state.busy.attach ? `<p class="muted">${esc(state.busy.attach)}</p>` : ''}
+    <form data-form="attach" class="row"><input type="text" name="draftId" inputmode="numeric" placeholder="Sleeper draft ID" aria-label="Draft ID" autocomplete="off"><button class="btn" type="submit">Attach</button></form>
+    <button class="btn" data-action="find-drafts">Find my drafts</button>
+    ${state.busy.drafts ? `<p class="muted">${esc(state.busy.drafts)}</p>` : ''}${draftRows}
+    <p class="muted small">Use this to follow a Sleeper mock draft: tap Find my drafts after joining one, or paste the ID from its link (sleeper.com/draft/nfl/ID). Values keep this league's scoring and roster; turn detection uses the attached draft's order.</p>`;
   return `<section class="card"><h2>Live draft and replay</h2>${status}
     <p class="muted small">Replay steps through last season's draft (${prev ? 'previous league found' : 'no previous league'}) to test the board, turn detection and rosters without a live draft.</p>
     <button class="btn" data-action="replay-start" ${prev ? '' : 'disabled'}>Load replay of last season</button>
+    ${attach}
   </section>`;
 }
 
