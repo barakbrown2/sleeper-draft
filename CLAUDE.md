@@ -19,10 +19,14 @@ build step, no server. The full plan is
 - **Two leagues, different formats.** League 1 "vigorous jazz hands"
   (league `1388245460631719936`, draft `1388245460648497152`): 10-team
   superflex, full PPR, snake, 15 rounds, 90 s clock, no K/DEF, user at slot 1.
-  League 2 is TBD (likely 1QB). Scoring, roster slots, and draft config are
-  read from the API per league at runtime. Never hardcode scoring values,
-  roster slots, rounds, or timer. Trust the draft object over the league
-  object for rounds/timer/type.
+  League 2 "Deep Cuts" (league `1389345938123804672`, draft
+  `1389345938123804673`): 16-team 1QB, QB/2RB/2WR/TE/2FLEX/6BN, no K/DEF,
+  snake, 14 rounds, 60 s clock, user at slot 4, 6-pt pass TD, TE premium
+  0.5, yardage and rush-attempt bonuses; drafts **Sunday Sept 6, 2026,
+  8:00 PM CDT** (start_time 1788742851000), needs the 1QB rankings export.
+  Scoring, roster slots, and draft config are read from the API per league
+  at runtime. Never hardcode scoring values, roster slots, rounds, or timer.
+  Trust the draft object over the league object for rounds/timer/type.
 - **No build, no node_modules.** Plain ES modules served as-is from `main`.
   This folder is OneDrive-synced: never create `node_modules/`, lockfiles, or
   build output here. Node is used only to run `test/*.mjs` with built-ins.

@@ -446,8 +446,8 @@ function makeLive(mode, source, draft, extra = {}) {
     source,
     intervalMs: 3000,
     onPicks: applyPicks,
-    onError: (e, reason) => {
-      if (!state.live) return;
+    onError: (e, reason, fromLoop) => {
+      if (!state.live || (fromLoop && state.live.loop !== fromLoop)) return;
       state.live.errors++;
       log(`picks fetch failed (${reason}): ${e.message}`);
       renderHeaderOnly();
@@ -557,9 +557,9 @@ function replayAuto(on) {
 }
 
 // Called by the loop after every fetch; re-renders when picks changed.
-function applyPicks({ picks, fresh, changed, reason, draft }) {
+function applyPicks({ picks, fresh, changed, reason, draft, loop }) {
   const live = state.live;
-  if (!live) return;
+  if (!live || (loop && live.loop !== loop)) return; // stale callback from a replaced loop
   const d = draft || live.draft;
   live.draft = d;
   live.picks = picks;

@@ -103,11 +103,14 @@ export class DraftLoop {
   }
 
   // Fetch picks (and the draft object when something changed or every 15 s).
+  // Results that arrive after stop() are dropped so a stopped loop (replay
+  // exit, draft switch) can never write into whatever replaced it.
   refresh(reason = 'manual') {
     if (this._inflight) return this._inflight;
     this._inflight = (async () => {
       try {
         const picks = await this.source.fetchPicks();
+        if (!this.running) return;
         const fresh = newPicks(this.picks, picks);
         const changed = fresh.length > 0 || picks.length !== this.picks.length;
         this.picks = picks;
@@ -116,6 +119,7 @@ export class DraftLoop {
         if (changed || !this.draft || Date.now() - this.lastDraftFetch > 15000) {
           try {
             const d = await this.source.fetchDraft();
+            if (!this.running) return;
             if (d) {
               this.draft = d;
               this.lastDraftFetch = Date.now();
@@ -124,10 +128,12 @@ export class DraftLoop {
             this.log(`draft fetch failed: ${e.message}`);
           }
         }
-        this.onPicks({ picks, fresh, changed, reason, draft: this.draft });
+        if (!this.running) return;
+        this.onPicks({ picks, fresh, changed, reason, draft: this.draft, loop: this });
       } catch (e) {
+        if (!this.running) return;
         this.errors++;
-        this.onError(e, reason);
+        this.onError(e, reason, this);
       } finally {
         this._inflight = null;
       }
