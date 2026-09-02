@@ -86,6 +86,28 @@ function waitOnCard(state) {
   return `<section class="card"><h3>Likely there at your next turn (#${esc(String(info))})</h3>${items}<p class="muted small">Sim N=${sim.N}, ${sim.ms} ms${sim.stale ? ', updating' : ''}.</p></section>`;
 }
 
+// Suggested draft path: position per pick that maximizes projected starter points.
+function pathBlock(plan) {
+  const path = plan.path;
+  if (!path || !path.path.length) return '';
+  const rows = path.path
+    .map((x) =>
+      x.pos === 'BN'
+        ? `<div class="pathrow"><span class="pick">#${x.pick}</span><span class="muted">bench, best available</span></div>`
+        : `<div class="pathrow ${x.starter === false ? 'muted' : ''}"><span class="pick">#${x.pick}</span><span class="${posClass(x.pos)}">${esc(x.pos)}</span><span class="grow">${esc(x.likely || '')}${x.p != null ? ` <span class="muted small">${pct(x.p)}</span>` : ''}${x.starter === false ? ' <span class="tag depth">depth</span>' : ''}</span><span class="pts">${n0(x.pts)}</span></div>`,
+    )
+    .join('');
+  const alts = (path.alternatives || [])
+    .map((a) => `<span class="${posClass(a.pos)}">${esc(a.pos)}</span>${a.likely ? ` ${esc(a.likely.split(' ').slice(-1)[0])}` : ''} ${a.cost < 0.5 ? '<b>best</b>' : `-${n0(a.cost)}`}`)
+    .join(' &middot; ');
+  return `<div class="pathbox">
+    <h3>Suggested path: projected starters ${n0(path.total)} pts</h3>
+    ${rows}
+    ${alts ? `<div class="small" style="margin-top:6px">First pick options: ${alts}</div>` : ''}
+    <p class="muted small">Position per pick that maximizes projected starting-lineup points, valuing each pick at the expected best available then (the name is the most likely one, with its chance). Re-runs from your real roster as the draft goes.</p>
+  </div>`;
+}
+
 // Pre-draft plan: expected best available at each of the next turns, and
 // how the top tiers at each position are expected to drain.
 function planCard(state) {
@@ -126,6 +148,7 @@ function planCard(state) {
     )
     .join('');
   return `<details class="card plan" ${isOpen ? 'open' : ''}>${head}
+    ${pathBlock(plan)}
     <p class="muted small">Top row per position: expected best value at that turn and the most likely name (50%+ to be there). Tier lines: expected players left from each top tier at each turn, then the value drop behind it.</p>
     ${table}${tiers}
     <p class="muted small">N=${plan.N}, ${plan.ms} ms${busy ? ', updating' : ''}. <button class="btn" data-action="run-plan" ${busy ? 'disabled' : ''}>Re-run</button></p>

@@ -10,7 +10,7 @@ import { parseProjections, parseRankings, buildPlayerIndex, matchRows } from '..
 import { buildPool } from '../src/model.js';
 import { slotForPick, roundOf, picksForSlot, groupTurns } from '../src/draft.js';
 import { rosterConfig, rosterPositionsFromDraft } from '../src/sim.js';
-import { computePlan, tierWatch } from '../src/plan.js';
+import { computePlan, tierWatch, optimizeWithAlternatives } from '../src/plan.js';
 import { trimPlayers } from '../src/api.js';
 await import('../src/simcore.js');
 
@@ -113,6 +113,15 @@ for (const pos of ['QB', 'RB', 'WR', 'TE']) {
   const cells = plan.byPos[pos].map((c) => `${c.expBest.toFixed(0).padStart(4)} ${(c.likely[0] ? c.likely[0].name.split(' ').slice(-1)[0] : '-').padEnd(11)}`);
   console.log(`${pos.padEnd(3)} ${cells.join(' ')}`);
 }
+console.log('\n== suggested draft path (maximize projected starting lineup) ==');
+// horizons[0] is pick 1 itself (everyone available), so turn i maps to horizon index i.
+const turnObjs = [{ picks: turns[0], h: null }].concat(turns.slice(1, 8).map((t, i) => ({ picks: t, h: i + 1 })));
+const best = optimizeWithAlternatives({ model, taken: new Set(), survival: r.survival, turns: turnObjs, rosterPositions: league.roster_positions, myPlayers: [] });
+for (const x of best.path) console.log(`  #${String(x.pick).padStart(3)} ${x.pos.padEnd(3)} ${x.likely ? x.likely.padEnd(22) : ''.padEnd(22)} ${x.pts ? x.pts.toFixed(0).padStart(4) + ' pts' : ''}${x.p != null ? `  (${(x.p * 100).toFixed(0)}% that name)` : ''}${x.starter === false ? '  depth' : ''}`);
+console.log(`  projected starters: ${best.total.toFixed(0)} pts`);
+console.log(`  first pick options: ${best.alternatives.map((a) => `${a.pos} ${a.likely || ''} ${a.cost < 0.5 ? '(best)' : `-${a.cost.toFixed(0)}`}`).join(' | ')}`);
+console.log('  lineup: ' + best.lineup.map((l) => `${l.slot.replace('SUPER_FLEX', 'SF')}=${l.player ? `${l.player.name} ${l.player.lgPts.toFixed(0)}` : 'open'}`).join(', '));
+
 console.log('\n== tier watch from pick 1: how many of each top tier are expected to survive to each turn ==');
 for (const pos of ['QB', 'RB', 'WR', 'TE']) {
   const tw = tierWatch({ model, taken: new Set(), survival: r.survival, horizons, pos, maxTiers: 4 });

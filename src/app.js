@@ -15,7 +15,7 @@ import { renderTeam } from './ui/team.js';
 import { renderDetail } from './ui/detail.js';
 import { checkForUpdate, VERSION } from './update.js';
 import { SimClient, buildSimInput, DEFAULT_SIM_SETTINGS } from './sim.js';
-import { computePlan, tierWatch, tierAlarms } from './plan.js';
+import { computePlan, tierWatch, tierAlarms, optimizeWithAlternatives } from './plan.js';
 import { userNeedMultipliers } from './lineup.js';
 import { myPlayers } from './ui/team.js';
 import { esc as escHtml } from './ui/dom.js';
@@ -471,8 +471,21 @@ async function runPlan(reason) {
   const plan = computePlan({ model, taken, survival: result.survival, horizons: result.horizons, valueFn: adjValueOf });
   const tiers = {};
   for (const pos of ['QB', 'RB', 'WR', 'TE']) tiers[pos] = tierWatch({ model, taken, survival: result.survival, horizons: result.horizons, pos, maxTiers: 2 });
-  state.plan = { ...plan, tiers, horizonsInfo: input.horizonsInfo, atPick: input.currentPick, N: result.N, ms: result.ms, at: Date.now() };
-  log(`plan (${reason}): N=${result.N} ${result.ms} ms, ${input.picks.length} picks, turns ${result.horizons.join('/')}`);
+  // Draft-path optimizer: the current turn (if it is ours) plus the simulated future turns.
+  let path = null;
+  try {
+    const t = live.turn;
+    const nextStart = t.futureTurns[0] ? t.futureTurns[0][0] : Infinity;
+    const nowPicks = t.isUserTurn ? t.userPicks.filter((p) => p >= t.current && p < nextStart) : [];
+    const turns = (nowPicks.length ? [{ picks: nowPicks, h: null }] : []).concat(input.horizonsInfo.map((picks, h) => ({ picks, h })));
+    const t0 = performance.now();
+    path = optimizeWithAlternatives({ model, taken, survival: result.survival, turns, rosterPositions: state.bundle.league.roster_positions || [], myPlayers: myPlayers(state) });
+    if (path) path.ms = Math.round(performance.now() - t0);
+  } catch (e) {
+    log(`path optimizer failed: ${e.message}`);
+  }
+  state.plan = { ...plan, tiers, path, horizonsInfo: input.horizonsInfo, atPick: input.currentPick, N: result.N, ms: result.ms, at: Date.now() };
+  log(`plan (${reason}): N=${result.N} ${result.ms} ms, ${input.picks.length} picks, turns ${result.horizons.join('/')}${path ? `; path ${path.path.map((x) => x.pos).join('')} = ${path.total.toFixed(0)} pts (${path.ms} ms)` : ''}`);
   if (state.tab === 'board') render();
 }
 

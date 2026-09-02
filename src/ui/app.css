@@ -293,6 +293,35 @@ details.plan[open] summary::before {
   padding: 4px 0;
   border-top: 1px solid var(--line);
 }
+.pathbox {
+  background: var(--card2);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin: 8px 0;
+}
+.pathrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  font-size: 16px;
+}
+.pathrow .pick {
+  flex: 0 0 48px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.pathrow .grow {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pathrow .pts {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
 .banner {
   background: var(--amber);
   color: #000;

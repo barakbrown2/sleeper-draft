@@ -429,6 +429,31 @@ async function sectionPlan() {
   check(nm.mult.RB === 0.9 && nm.mult.TE === 0.9 && nm.mult.QB === 1, `RB/WR/TE starters full, FLEX taken by RB3: RB x${nm.mult.RB}, TE x${nm.mult.TE}, QB x${nm.mult.QB} (SF open)`);
   const { lineup } = computeLineup(rp, [mk('QB', 300), mk('QB', 290)]);
   check(lineup.find((l) => l.slot === 'SUPER_FLEX').player && lineup.find((l) => l.slot === 'SUPER_FLEX').player.pos === 'QB', 'second QB fills the SUPER_FLEX slot');
+
+  // Draft-path optimizer from pick 1.
+  const { optimizeWithAlternatives, expectedKthBest, capsFromRoster } = await import('../src/plan.js');
+  const caps = capsFromRoster(rp);
+  check(caps.QB === 2 && caps.RB === 4 && caps.WR === 5 && caps.TE === 3, `caps QB${caps.QB} RB${caps.RB} WR${caps.WR} TE${caps.TE}`);
+  const tes = model.pool.filter((p) => p.pos === 'TE').sort((a, b) => b.lgPts - a.lgPts);
+  const k1 = expectedKthBest(tes, r.survival, 1, 1);
+  const k2 = expectedKthBest(tes, r.survival, 1, 2);
+  console.log(`  TE at #40: 1st best ${k1.pts.toFixed(1)} (likely ${k1.likely.name} ${(k1.p * 100).toFixed(0)}%), 2nd best ${k2.pts.toFixed(1)} (likely ${k2.likely.name})`);
+  check(k1.pts > k2.pts && k1.pts > 200 && k2.pts < k1.pts, 'expected 1st best > 2nd best at TE');
+  const turnObjs = [{ picks: [1], h: null }].concat(input.horizonsInfo.map((picks, h) => ({ picks, h })));
+  const t0 = Date.now();
+  const best = optimizeWithAlternatives({ model, taken, survival: r.survival, turns: turnObjs, rosterPositions: rp, myPlayers: [] });
+  console.log(`  optimizer ${Date.now() - t0} ms: ${best.path.map((x) => `#${x.pick} ${x.pos}${x.likely ? ' ' + x.likely.split(' ').slice(-1)[0] : ''}`).join(', ')} = ${best.total.toFixed(0)} pts`);
+  console.log(`  first pick options: ${best.alternatives.map((a) => `${a.pos} ${a.cost.toFixed(0)}`).join(', ')}`);
+  check(best.path.length === 14 && best.path[0].pos === 'RB', `path covers 14 picks and opens with RB (${best.path[0].likely})`);
+  const qbs = best.path.filter((x) => x.pos === 'QB').length;
+  check(qbs === 2, `path drafts exactly 2 QBs for QB + SF (${qbs})`);
+  const filled = best.lineup.filter((l) => l.player).length;
+  check(filled === 9, `all 9 starting slots filled by the path (${filled})`);
+  const qbAlt = best.alternatives.find((a) => a.pos === 'QB');
+  check(qbAlt && qbAlt.cost > 0, `taking a QB first costs ${qbAlt ? qbAlt.cost.toFixed(0) : '-'} projected starter points`);
+  // Mid-draft: with two QBs already, the path never adds a third.
+  const mid = optimizeWithAlternatives({ model, taken, survival: r.survival, turns: turnObjs.slice(1), rosterPositions: rp, myPlayers: [mk('QB', 300), mk('QB', 290)] });
+  check(mid.path.every((x) => x.pos !== 'QB'), 'with QB and SF filled the path adds no QB');
 }
 
 const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim, league2: sectionLeague2, plan: sectionPlan };

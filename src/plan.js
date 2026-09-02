@@ -1,6 +1,8 @@
 // src/plan.js
 // Pre-draft plan and tier watch derived from survival probabilities
-// (plan section 7, "pre-draft plan mode"; section 9, tier alarms). Pure.
+// (plan section 7, "pre-draft plan mode"; section 9, tier alarms), and a
+// draft-path optimizer for the highest projected starting lineup. Pure.
+import { SLOT_ELIGIBLE, computeLineup } from './lineup.js';
 
 const rawValue = (p) => p.value;
 
@@ -67,6 +69,139 @@ export function tierWatch({ model, taken, survival, horizons, pos, maxTiers = 3 
     t.last = t.members[t.members.length - 1];
   }
   return tiers;
+}
+
+// Expected projected points of the k-th best available player at a position
+// at horizon index h (null = right now, everyone available), assuming
+// independent survival: sum_i pts_i * s_i * P(exactly k-1 higher-ranked
+// players are available). Also returns the most likely player to be that
+// k-th best. `list` is sorted by lgPts descending.
+export function expectedKthBest(list, survival, h, k) {
+  const probs = new Float64Array(k);
+  probs[0] = 1;
+  let exp = 0;
+  let mass = 0;
+  const candidates = [];
+  for (const p of list) {
+    const s = survival[p.player_id];
+    const sp = h == null ? 1 : s ? s[h] : 0;
+    const pk = sp * probs[k - 1];
+    exp += p.lgPts * pk;
+    mass += pk;
+    if (pk > 0.001) candidates.push({ player: p, p: pk });
+    for (let m = k - 1; m >= 1; m--) probs[m] = probs[m] * (1 - sp) + probs[m - 1] * sp;
+    probs[0] *= 1 - sp;
+    if (mass > 0.9999) break;
+  }
+  candidates.sort((a, b) => b.p - a.p);
+  const top = candidates[0] || null;
+  return { pts: exp, likely: top ? top.player : null, p: top ? top.p : 0, mass, candidates: candidates.slice(0, 6) };
+}
+
+// How many players of each position can start: dedicated slots plus every
+// flex-type slot that accepts the position.
+export function capsFromRoster(rosterPositions) {
+  const counts = {};
+  for (const s of rosterPositions || []) counts[s] = (counts[s] || 0) + 1;
+  const caps = {};
+  for (const pos of ['QB', 'RB', 'WR', 'TE', 'K', 'DEF']) {
+    let n = counts[pos] || 0;
+    for (const slot in SLOT_ELIGIBLE) if (SLOT_ELIGIBLE[slot].length > 1 && SLOT_ELIGIBLE[slot].includes(pos)) n += counts[slot] || 0;
+    caps[pos] = n;
+  }
+  return caps;
+}
+
+function lineupPoints(rosterPositions, list) {
+  return computeLineup(rosterPositions, list).lineup.reduce((s, l) => s + (l.player ? l.player.lgPts || 0 : 0), 0);
+}
+
+// Choose the position to draft at each of the user's upcoming picks so the
+// expected projected points of the starting lineup are maximized, given the
+// players already on the roster. turns: [{ picks: [pickNo...], h: horizonIndex
+// | null (now) }]. Dynamic program over (pick index, drafted counts per
+// position), keeping the best lineup per state; each drafted slot is valued
+// at the expected k-th best available at that turn. forceFirst pins the
+// first pick's position (for "what does taking X first cost").
+export function optimizeDraftPath({ model, taken, survival, turns, rosterPositions, myPlayers = [], maxPicks = 14, forceFirst = null }) {
+  const seq = [];
+  for (const t of turns) for (const pn of t.picks) seq.push({ pick: pn, h: t.h == null ? null : t.h });
+  const picks = seq.slice(0, maxPicks);
+  if (!picks.length) return null;
+  const byPos = {};
+  for (const p of model.pool) {
+    if (taken.has(p.player_id) || !(p.lgPts > 0)) continue;
+    (byPos[p.pos] = byPos[p.pos] || []).push(p);
+  }
+  for (const pos in byPos) byPos[pos].sort((a, b) => b.lgPts - a.lgPts);
+  const positions = Object.keys(byPos).filter((pos) => SLOT_ELIGIBLE[pos]);
+  const caps = capsFromRoster(rosterPositions);
+  const have = {};
+  for (const p of myPlayers) have[p.pos] = (have[p.pos] || 0) + 1;
+  const memo = new Map();
+  const kth = (pos, h, k) => {
+    const key = `${pos}|${h}|${k}`;
+    if (!memo.has(key)) memo.set(key, expectedKthBest(byPos[pos], survival, h, k));
+    return memo.get(key);
+  };
+  const base = myPlayers.map((p) => ({ pos: p.pos, lgPts: p.lgPts || 0, name: p.name, fixed: true }));
+  const keyOf = (counts) => positions.map((pos) => counts[pos] || 0).join(',');
+  let states = new Map([[keyOf({}), { counts: {}, list: base, path: [], value: lineupPoints(rosterPositions, base), sum: 0, used: new Set() }]]);
+  picks.forEach((pk, i) => {
+    const next = new Map();
+    for (const st of states.values()) {
+      const options = i === 0 && forceFirst ? [forceFirst] : positions.concat(['BN']);
+      for (const pos of options) {
+        let list2 = st.list;
+        let item;
+        let counts2 = st.counts;
+        let value = st.value;
+        let used2 = st.used;
+        if (pos === 'BN') {
+          item = { pick: pk.pick, pos: 'BN', pts: 0, likely: null, starter: false };
+        } else {
+          const drafted = st.counts[pos] || 0;
+          if ((have[pos] || 0) + drafted >= caps[pos]) continue;
+          const est = kth(pos, pk.h, drafted + 1);
+          if (!est.likely) continue;
+          // Display name: the most likely k-th best not already named on this path.
+          const cand = est.candidates.find((c) => !st.used.has(c.player.player_id)) || est.candidates[0];
+          const who = cand ? cand.player : est.likely;
+          list2 = st.list.concat([{ pos, lgPts: est.pts, name: who.name }]);
+          counts2 = { ...st.counts, [pos]: drafted + 1 };
+          value = lineupPoints(rosterPositions, list2);
+          used2 = new Set(st.used);
+          used2.add(who.player_id);
+          item = { pick: pk.pick, pos, pts: est.pts, likely: who.name, likelyId: who.player_id, p: cand ? cand.p : est.p, tier: who.tier, starter: value > st.value + 1e-9 };
+        }
+        const sum = st.sum + (item.pts || 0);
+        const k = keyOf(counts2);
+        const prev = next.get(k);
+        if (!prev || value > prev.value + 1e-9 || (Math.abs(value - prev.value) <= 1e-9 && sum > prev.sum)) {
+          next.set(k, { counts: counts2, list: list2, path: st.path.concat([item]), value, sum, used: used2 });
+        }
+      }
+    }
+    states = next;
+  });
+  let best = null;
+  for (const st of states.values()) if (!best || st.value > best.value + 1e-9 || (Math.abs(st.value - best.value) <= 1e-9 && st.sum > best.sum)) best = st;
+  if (!best) return null;
+  const startersNow = lineupPoints(rosterPositions, base);
+  return { total: best.value, gain: best.value - startersNow, path: best.path, lineup: computeLineup(rosterPositions, best.list).lineup, positions };
+}
+
+// Best path plus what pinning each position as the first pick costs.
+export function optimizeWithAlternatives(args) {
+  const best = optimizeDraftPath(args);
+  if (!best) return null;
+  const alternatives = [];
+  for (const pos of best.positions) {
+    const r = optimizeDraftPath({ ...args, forceFirst: pos });
+    if (r) alternatives.push({ pos, total: r.total, cost: best.total - r.total, likely: r.path[0] ? r.path[0].likely : null });
+  }
+  alternatives.sort((a, b) => a.cost - b.cost);
+  return { ...best, alternatives };
 }
 
 // Tier alarms for the banner: positions whose current top tier is likely
