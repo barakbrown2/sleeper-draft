@@ -1,14 +1,17 @@
 // src/app.js - app shell: state, init, tab routing, event delegation.
 import * as api from './api.js';
 import { KEYS, loadJSON, saveJSON, migrate, clearAll } from './storage.js';
+import { parseProjections, parseRankings, buildPlayerIndex, matchRows, searchPlayers } from './csv.js';
 import { esc, $ } from './ui/dom.js';
-import { renderSettings } from './ui/settings.js';
+import { renderSettings, renderFixResults } from './ui/settings.js';
 
 const DEFAULT_SETTINGS = {
   v: 1,
   username: 'barakbrown2',
   userId: null,
   leagueId: null,
+  nameOverrides: {},
+  rankingsFileByLeague: {},
 };
 
 const TABS = [
@@ -17,6 +20,12 @@ const TABS = [
   ['draft', 'Draft'],
   ['settings', 'Settings'],
 ];
+
+const FILE_KEYS = {
+  projections: KEYS.projections,
+  rankings1qb: KEYS.rankings1qb,
+  rankingsSuperflex: KEYS.rankingsSuperflex,
+};
 
 export const state = {
   settings: null,
@@ -29,6 +38,13 @@ export const state = {
   bundle: null,
   playersMeta: null,
   players: null,
+  playerIndex: null,
+  files: { projections: null, rankings1qb: null, rankingsSuperflex: null },
+  parsed: { projections: null, rankings1qb: null, rankingsSuperflex: null },
+  parseErrors: {},
+  activeRankingsKey: null,
+  match: null,
+  fixing: null,
   busy: {},
   log: [],
 };
@@ -39,7 +55,6 @@ export function log(msg) {
   state.log.push(line);
   if (state.log.length > 200) state.log.splice(0, state.log.length - 200);
   saveJSON(KEYS.log, state.log.slice(-100));
-  if (state.tab === 'settings') render();
 }
 
 let toastTimer = null;
@@ -69,6 +84,7 @@ function renderHeader() {
 function renderPlaceholder(tab) {
   const label = TABS.find((t) => t[0] === tab)[1];
   if (!state.leagueId) return `<div class="placeholder">Select a league in Settings to use ${esc(label)}.</div>`;
+  if (!state.parsed.projections) return `<div class="placeholder">Upload the projections CSV in Settings to use ${esc(label)}.</div>`;
   return `<div class="placeholder">${esc(label)} arrives in a later step.</div>`;
 }
 
@@ -78,6 +94,87 @@ export function render() {
   if (state.tab === 'settings') screen.innerHTML = renderSettings(state);
   else screen.innerHTML = renderPlaceholder(state.tab);
   $('tabbar').innerHTML = TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" aria-selected="${state.tab === id}">${label}</button>`).join('');
+}
+
+// ---- files: upload, persist, parse ----
+function loadFiles() {
+  for (const k in FILE_KEYS) {
+    const f = loadJSON(FILE_KEYS[k]);
+    state.files[k] = f && f.v === 1 && typeof f.text === 'string' ? f : null;
+    parseFile(k);
+  }
+}
+
+function parseFile(k) {
+  const f = state.files[k];
+  state.parsed[k] = null;
+  delete state.parseErrors[k];
+  if (!f) return;
+  try {
+    state.parsed[k] = k === 'projections' ? parseProjections(f.text) : parseRankings(f.text);
+  } catch (e) {
+    state.parseErrors[k] = e.message;
+    log(`parse ${k} failed: ${e.message}`);
+  }
+}
+
+async function onFileChosen(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const k = input.dataset.file;
+  if (!FILE_KEYS[k]) return;
+  const text = await file.text();
+  state.files[k] = { v: 1, text, name: file.name, uploadedAt: Date.now(), size: text.length };
+  saveJSON(FILE_KEYS[k], state.files[k]);
+  parseFile(k);
+  const p = state.parsed[k];
+  log(`uploaded ${k}: ${file.name}, ${text.length} chars, ${p ? `${p.count} rows` : 'parse failed'}`);
+  if (p && k !== 'projections') {
+    const expect = k === 'rankingsSuperflex' ? 'superflex' : '1qb';
+    if (p.format !== 'unknown' && p.format !== expect) toast(`This file looks like a ${p.format} rankings export but was uploaded as ${expect}.`, 'error', 8000);
+  }
+  rebuild();
+  render();
+}
+
+export function activeRankingsKey() {
+  const forced = state.leagueId && state.settings.rankingsFileByLeague[state.leagueId];
+  if (forced && FILE_KEYS[forced]) return forced;
+  const rp = state.bundle && state.bundle.league.roster_positions;
+  return rp && rp.includes('SUPER_FLEX') ? 'rankingsSuperflex' : 'rankings1qb';
+}
+
+function leaguePositions() {
+  const rp = (state.bundle && state.bundle.league.roster_positions) || [];
+  const pos = ['QB', 'RB', 'WR', 'TE'];
+  if (rp.includes('K')) pos.push('K');
+  if (rp.includes('DEF')) pos.push('DEF');
+  return pos;
+}
+
+// Re-match CSV rows to Sleeper players. Cheap (a few ms); runs after any
+// file, league, override, or player-map change. Scoring/values hook in here later.
+export function rebuild() {
+  state.activeRankingsKey = activeRankingsKey();
+  if (!state.players || !state.playerIndex) {
+    state.match = null;
+    return;
+  }
+  const positions = new Set(leaguePositions());
+  const overrides = state.settings.nameOverrides || {};
+  const proj = state.parsed.projections;
+  const rank = state.parsed[state.activeRankingsKey];
+  const projRows = proj ? proj.rows.filter((r) => positions.has(r.pos)) : [];
+  const rankRows = rank ? rank.rows.filter((r) => positions.has(r.pos)) : [];
+  state.match = {
+    proj: matchRows(projRows, state.playerIndex, { overrides }),
+    rank: matchRows(rankRows, state.playerIndex, { overrides }),
+    projTotal: projRows.length,
+    rankTotal: rankRows.length,
+    rankKey: state.activeRankingsKey,
+    hasRank: !!rank,
+  };
+  log(`match: proj ${state.match.proj.matched.length}/${projRows.length} (${state.match.proj.unmatched.length} unmatched), rank ${state.match.rank.matched.length}/${rankRows.length} (${state.match.rank.unmatched.length} unmatched)`);
 }
 
 // ---- actions ----
@@ -93,6 +190,7 @@ const actions = {
     state.settings.leagueId = id;
     saveSettings();
     state.bundle = api.cachedLeagueBundle(id);
+    rebuild();
     render();
     await refreshLeague();
   },
@@ -112,7 +210,49 @@ const actions = {
     await clearAll();
     location.reload();
   },
+  fix(btn) {
+    state.fixing = { key: btn.dataset.key, pos: btn.dataset.pos, name: btn.dataset.name, query: btn.dataset.name, results: [] };
+    state.fixing.results = searchPlayers(state.players, state.fixing.query, { pos: state.fixing.pos });
+    render();
+    const inp = document.querySelector('[data-search="fix"]');
+    if (inp) inp.focus();
+  },
+  'cancel-fix'() {
+    state.fixing = null;
+    render();
+  },
+  ignore(btn) {
+    setOverride(`${btn.dataset.key}|${btn.dataset.pos}`, 'ignore');
+  },
+  pick(btn) {
+    if (!state.fixing) return;
+    setOverride(`${state.fixing.key}|${state.fixing.pos}`, btn.dataset.id);
+    state.fixing = null;
+    render();
+  },
+  'reset-overrides'() {
+    state.settings.nameOverrides = {};
+    saveSettings();
+    rebuild();
+    render();
+  },
+  'remove-file'(btn) {
+    const k = btn.dataset.file;
+    if (!FILE_KEYS[k] || !confirm('Remove this file from the app?')) return;
+    state.files[k] = null;
+    saveJSON(FILE_KEYS[k], null);
+    parseFile(k);
+    rebuild();
+    render();
+  },
 };
+
+function setOverride(key, value) {
+  state.settings.nameOverrides = { ...(state.settings.nameOverrides || {}), [key]: value };
+  saveSettings();
+  rebuild();
+  render();
+}
 
 const forms = {
   async username(form) {
@@ -125,7 +265,8 @@ const forms = {
 };
 
 function bindEvents() {
-  document.getElementById('app').addEventListener('click', (e) => {
+  const app = $('app');
+  app.addEventListener('click', (e) => {
     const tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
       state.tab = tabBtn.dataset.tab;
@@ -142,12 +283,37 @@ function bindEvents() {
       toast(String(err && err.message ? err.message : err));
     });
   });
-  document.getElementById('app').addEventListener('submit', (e) => {
+  app.addEventListener('submit', (e) => {
     const form = e.target.closest('[data-form]');
     if (!form) return;
     e.preventDefault();
     const fn = forms[form.dataset.form];
     if (fn) Promise.resolve(fn(form)).catch((err) => toast(String(err)));
+  });
+  app.addEventListener('change', (e) => {
+    const input = e.target;
+    if (input.matches('input[type="file"][data-file]')) {
+      onFileChosen(input).catch((err) => {
+        log(`upload failed: ${err.message}`);
+        toast(`Upload failed: ${err.message}`);
+      });
+    } else if (input.matches('select[data-select="rankingsFile"]')) {
+      const v = input.value;
+      if (v === 'auto') delete state.settings.rankingsFileByLeague[state.leagueId];
+      else state.settings.rankingsFileByLeague[state.leagueId] = v;
+      saveSettings();
+      rebuild();
+      render();
+    }
+  });
+  app.addEventListener('input', (e) => {
+    const input = e.target;
+    if (input.matches('[data-search="fix"]') && state.fixing) {
+      state.fixing.query = input.value;
+      state.fixing.results = searchPlayers(state.players, input.value, { pos: state.fixing.pos });
+      const box = $('fix-results');
+      if (box) box.innerHTML = renderFixResults(state);
+    }
   });
   window.addEventListener('error', (e) => {
     log(`error: ${e.message}`);
@@ -191,6 +357,7 @@ async function refreshLeague() {
     log(`league refresh failed: ${e.message}`);
     toast(`League refresh failed: ${e.message}`);
   }
+  rebuild();
   render();
 }
 
@@ -206,6 +373,7 @@ async function loadPlayers(force = false) {
       },
     });
     state.players = rec.players;
+    state.playerIndex = buildPlayerIndex(rec.players);
     state.playersMeta = { count: rec.count, fetchedAt: rec.fetchedAt, fromCache: rec.fromCache, stale: rec.stale };
     log(`players: ${rec.count} (${rec.fromCache ? 'cache' : 'network'}${rec.stale ? ', stale' : ''})`);
   } catch (e) {
@@ -213,17 +381,21 @@ async function loadPlayers(force = false) {
     toast(`Player map failed: ${e.message}`);
   }
   state.busy.players = null;
+  rebuild();
   render();
 }
 
 async function init() {
   migrate();
   state.settings = { ...DEFAULT_SETTINGS, ...(loadJSON(KEYS.settings, {}) || {}) };
+  if (!state.settings.nameOverrides) state.settings.nameOverrides = {};
+  if (!state.settings.rankingsFileByLeague) state.settings.rankingsFileByLeague = {};
   state.log = loadJSON(KEYS.log, []) || [];
   state.leagueId = state.settings.leagueId;
   state.tab = state.leagueId ? 'board' : 'settings';
   if (state.leagueId) state.bundle = api.cachedLeagueBundle(state.leagueId);
   if (state.settings.userId) state.user = { user_id: state.settings.userId, username: state.settings.username };
+  loadFiles();
   bindEvents();
   render();
   log(`app start ${location.href}`);

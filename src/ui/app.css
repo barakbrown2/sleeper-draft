@@ -287,6 +287,41 @@ input[type='file'] {
   font-size: 15px;
 }
 
+.small {
+  font-size: 15px;
+}
+.filerow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.filerow .grow {
+  flex: 1;
+  min-width: 0;
+}
+.filebtns {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.filebtns .btn {
+  margin: 0;
+}
+.fixpanel {
+  background: var(--card2);
+  border-radius: 10px;
+  padding: 10px;
+  margin: 8px 0;
+}
+.fixpanel input {
+  margin: 8px 0;
+}
+.row select {
+  width: auto;
+}
+
 .log {
   max-height: 240px;
   overflow: auto;

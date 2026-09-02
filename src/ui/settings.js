@@ -1,5 +1,6 @@
-// src/ui/settings.js - Settings screen (league picker, connection, player map, debug).
-import { esc, fmtDateTime, fmtAgo } from './dom.js';
+// src/ui/settings.js - Settings screen: connection, league picker, files,
+// name matching, player map, debug log.
+import { esc, fmtDateTime, fmtAgo, posClass } from './dom.js';
 import { draftConfig, userSlot, picksForSlot, groupTurns } from '../draft.js';
 
 export function renderSettings(state) {
@@ -7,6 +8,8 @@ export function renderSettings(state) {
     connectionCard(state),
     leagueCard(state),
     state.bundle ? leagueSummaryCard(state) : '',
+    filesCard(state),
+    unmatchedCard(state),
     playersCard(state),
     debugCard(state),
     dangerCard(),
@@ -93,7 +96,9 @@ function leagueSummaryCard(state) {
   const uid = state.user ? state.user.user_id : state.settings.userId;
   const slot = userSlot(draft, uid);
   const picks = slot ? picksForSlot(slot, cfg.teams, cfg.rounds, { type: cfg.type, reversalRound: cfg.reversalRound }) : [];
-  const turns = groupTurns(picks).map((t) => t.join('/')).join(', ');
+  const turns = groupTurns(picks)
+    .map((t) => t.join('/'))
+    .join(', ');
   const rp = league.roster_positions || [];
   const hasK = rp.includes('K');
   const hasDef = rp.includes('DEF');
@@ -118,6 +123,95 @@ function leagueSummaryCard(state) {
   </section>`;
 }
 
+const FILE_LABELS = [
+  ['projections', 'Projections CSV (season totals)'],
+  ['rankings1qb', 'Rankings CSV (1QB)'],
+  ['rankingsSuperflex', 'Rankings CSV (Superflex)'],
+];
+
+function filesCard(state) {
+  const items = FILE_LABELS.map(([k, label]) => {
+    const f = state.files[k];
+    const p = state.parsed[k];
+    const err = state.parseErrors[k];
+    let sub;
+    if (!f) sub = '<span class="muted">Not uploaded</span>';
+    else if (err) sub = `<span class="status-bad">Parse error: ${esc(err)}</span>`;
+    else if (k === 'projections')
+      sub = `${p.count} rows: ${Object.entries(p.counts)
+        .map(([a, b]) => `${b} ${a}`)
+        .join(', ')}`;
+    else {
+      const expect = k === 'rankingsSuperflex' ? 'superflex' : '1qb';
+      const warn = p.format !== 'unknown' && p.format !== expect ? ` <span class="status-warn">looks like a ${esc(p.format)} export</span>` : '';
+      sub = `${p.count} players; analysts ${esc(p.analysts.join(', '))}${p.duplicates.length ? `; ${p.duplicates.length} duplicate merged` : ''}${warn}`;
+    }
+    const active = k !== 'projections' && state.activeRankingsKey === k && f ? ' <span class="status-ok">in use</span>' : '';
+    return `<div class="filerow">
+      <div class="grow"><div><b>${label}</b>${active}</div><div class="muted small">${sub}</div>${f ? `<div class="muted small">${esc(f.name)}, ${fmtAgo(f.uploadedAt)} (${fmtDateTime(f.uploadedAt)})</div>` : ''}</div>
+      <div class="filebtns"><label class="btn">${f ? 'Replace' : 'Upload'}<input type="file" accept=".csv,text/csv,text/plain" data-file="${k}" hidden></label>${f ? `<button class="btn" data-action="remove-file" data-file="${k}">Remove</button>` : ''}</div>
+    </div>`;
+  }).join('');
+  let sel = '';
+  if (state.leagueId) {
+    const forced = state.settings.rankingsFileByLeague[state.leagueId] || 'auto';
+    const rp = (state.bundle && state.bundle.league.roster_positions) || [];
+    const auto = rp.includes('SUPER_FLEX') ? 'Superflex' : '1QB';
+    const opt = (v, label) => `<option value="${v}" ${forced === v ? 'selected' : ''}>${label}</option>`;
+    sel = `<div class="row"><div class="grow">Rankings file for this league</div><select data-select="rankingsFile">${opt('auto', `Auto (${auto})`)}${opt('rankings1qb', '1QB')}${opt('rankingsSuperflex', 'Superflex')}</select></div>`;
+  }
+  return `<section class="card"><h2>Files</h2><p class="muted small">Upload from the Files app. Files stay in this browser and are re-parsed on every load.</p>${items}${sel}</section>`;
+}
+
+function unmatchedCard(state) {
+  const m = state.match;
+  if (!m) {
+    return state.parsed.projections ? '<section class="card"><h2>Name matching</h2><p class="muted">Waiting for the player map</p></section>' : '';
+  }
+  if (!state.parsed.projections && !m.hasRank) return '';
+  const summary = `<div class="kv">
+    <div>Projections</div><div>${state.parsed.projections ? `${m.proj.matched.length} / ${m.projTotal} matched` : 'not uploaded'}</div>
+    <div>Rankings (${m.rankKey === 'rankingsSuperflex' ? 'superflex' : '1QB'})</div><div>${m.hasRank ? `${m.rank.matched.length} / ${m.rankTotal} matched` : 'not uploaded'}</div>
+  </div>`;
+  const un = [...m.proj.unmatched.map((x) => ({ ...x, src: 'projections' })), ...m.rank.unmatched.map((x) => ({ ...x, src: 'rankings' }))];
+  const amb = [...m.proj.ambiguous.map((x) => ({ ...x, src: 'projections' })), ...m.rank.ambiguous.map((x) => ({ ...x, src: 'rankings' }))];
+  const rowHtml = (x, extra) => `<div class="row">
+    <div class="grow"><b>${esc(x.row.name)}</b> <span class="${posClass(x.row.pos)}">${esc(x.row.pos)}</span> <span class="muted small">${esc(x.row.teamRaw || '-')}, ${x.src}${extra || ''}</span></div>
+    <button class="btn" data-action="fix" data-key="${esc(x.row.key)}" data-pos="${esc(x.row.pos)}" data-name="${esc(x.row.name)}">Fix</button>
+    <button class="btn" data-action="ignore" data-key="${esc(x.row.key)}" data-pos="${esc(x.row.pos)}">Ignore</button>
+  </div>`;
+  const unHtml = un.length ? `<h3>Unmatched (${un.length})</h3>${un.map((x) => rowHtml(x)).join('')}` : '<p class="status-ok">All names matched.</p>';
+  const ambHtml = amb.length ? `<h3>Check these (${amb.length})</h3>${amb.map((x) => rowHtml(x, ` matched to ${esc(x.player.full_name)} ${esc(x.player.team || 'FA')}`)).join('')}` : '';
+  const nOv = Object.keys(state.settings.nameOverrides || {}).length;
+  const ov = nOv ? `<div class="row"><div class="grow muted small">${nOv} manual fix${nOv > 1 ? 'es' : ''} saved</div><button class="btn" data-action="reset-overrides">Reset fixes</button></div>` : '';
+  return `<section class="card ${un.length ? 'warn' : ''}"><h2>Name matching</h2>${summary}${fixPanel(state)}${unHtml}${ambHtml}${ov}</section>`;
+}
+
+function fixPanel(state) {
+  const f = state.fixing;
+  if (!f) return '';
+  return `<div class="fixpanel">
+    <div><b>Match "${esc(f.name)}" (${esc(f.pos)}) to a Sleeper player</b></div>
+    <input type="search" data-search="fix" value="${esc(f.query)}" placeholder="Search Sleeper players" autocapitalize="none" autocorrect="off">
+    <div id="fix-results">${renderFixResults(state)}</div>
+    <button class="btn" data-action="cancel-fix">Cancel</button>
+  </div>`;
+}
+
+export function renderFixResults(state) {
+  const f = state.fixing;
+  if (!f) return '';
+  if (!f.results.length) return '<p class="muted small">No players found.</p>';
+  return f.results
+    .map(
+      (p) => `<button class="league-opt" data-action="pick" data-id="${esc(p.player_id)}">
+      <div class="name">${esc(p.full_name)}</div>
+      <div class="sub">${esc(p.position)} ${esc(p.team || 'FA')} ${esc(p.status || '')}</div>
+    </button>`,
+    )
+    .join('');
+}
+
 function playersCard(state) {
   const m = state.playersMeta;
   let body;
@@ -133,7 +227,10 @@ function playersCard(state) {
 }
 
 function debugCard(state) {
-  const lines = (state.log || []).slice(-60).map((l) => esc(l)).join('\n');
+  const lines = (state.log || [])
+    .slice(-60)
+    .map((l) => esc(l))
+    .join('\n');
   return `<section class="card"><h2>Debug log</h2><pre class="log">${lines || '(empty)'}</pre>
     <button class="btn" data-action="clear-log">Clear log</button></section>`;
 }
