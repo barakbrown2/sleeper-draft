@@ -1,13 +1,17 @@
-// src/app.js - app shell: state, init, tab routing, event delegation.
+// src/app.js - app shell: state, init, tab routing, event delegation, live loop wiring.
 import * as api from './api.js';
 import { KEYS, loadJSON, saveJSON, migrate, clearAll } from './storage.js';
 import { parseProjections, parseRankings, buildPlayerIndex, matchRows, searchPlayers } from './csv.js';
 import { buildPool } from './model.js';
 import { DEFAULT_VALUE_SETTINGS } from './value.js';
 import { DEFAULT_CVS, DEFAULT_FUMBLES } from './scoring.js';
-import { esc, $ } from './ui/dom.js';
+import { turnInfo, rostersFromPicks, userSlot, pickInRound } from './draft.js';
+import { LiveSource, ReplaySource, DraftLoop } from './live.js';
+import { esc, $, fmtDateTime, fmtAgo } from './ui/dom.js';
 import { renderSettings, renderFixResults } from './ui/settings.js';
 import { renderBoard } from './ui/board.js';
+import { renderDraftLog, teamName } from './ui/draftlog.js';
+import { renderTeam } from './ui/team.js';
 
 const DEFAULT_SETTINGS = {
   v: 1,
@@ -59,9 +63,17 @@ export const state = {
   taken: new Set(),
   boardFilter: 'ALL',
   boardLimit: 12,
+  draftView: 'picks',
+  draftFilter: 'ALL',
+  draftSort: 'pick',
+  live: null,
   busy: {},
   log: [],
 };
+
+function currentUserId() {
+  return state.user ? state.user.user_id : state.settings.userId;
+}
 
 // ---- logging (visible in Settings; persisted so phone crashes are debuggable) ----
 export function log(msg) {
@@ -88,27 +100,76 @@ function saveSettings() {
   saveJSON(KEYS.settings, state.settings);
 }
 
-// ---- rendering ----
+// ---- header: league + pick status + countdown ----
+function countdownText() {
+  const live = state.live;
+  if (!live || !live.draft || live.turn.complete) return '';
+  const cfg = live.turn.cfg;
+  const last = live.draft.last_picked;
+  if (!cfg.pickTimer || !last || live.draft.status !== 'drafting') return '';
+  const remain = Math.round((cfg.pickTimer * 1000 - (Date.now() - last)) / 1000);
+  if (remain <= 0) return '0:00';
+  return `${Math.floor(remain / 60)}:${String(remain % 60).padStart(2, '0')}`;
+}
+
 function renderHeader() {
-  const name = state.bundle ? state.bundle.league.name : 'Sleeper Draft Assistant';
-  const sub = state.bundle ? `${esc(state.bundle.draft ? state.bundle.draft.status : 'no draft')}` : 'Pick a league in Settings';
-  return `<h1>${esc(name)}</h1><div class="muted">${sub}</div>`;
+  if (!state.bundle) return '<h1>Sleeper Draft Assistant</h1><div class="muted">Pick a league in Settings</div>';
+  const name = state.bundle.league.name;
+  const live = state.live;
+  if (!live) {
+    const d = state.bundle.draft;
+    return `<h1>${esc(name)}</h1><div class="muted">${d ? esc(d.status) : 'no draft'}</div>`;
+  }
+  const t = live.turn;
+  const cfg = t.cfg;
+  const badge = live.mode === 'replay' ? `<span class="badge">REPLAY ${esc(live.replay.season)} ${live.source.n}/${live.source.total}</span>` : live.errors > 1 ? '<span class="badge bad">offline?</span>' : '';
+  let main;
+  let sub;
+  if (t.complete) {
+    main = 'Draft complete';
+    sub = `${live.picks.length} picks`;
+  } else if (live.draft.status === 'pre_draft' && !live.picks.length) {
+    main = `Pre-draft, starts ${fmtDateTime(cfg.startTime)}`;
+    sub = `You are slot ${t.slot != null ? t.slot : '?'} of ${cfg.teams}, ${cfg.rounds} rounds, ${cfg.pickTimer} s clock`;
+  } else {
+    const onClock = teamName(state, live.rosters[t.currentSlot] ? live.rosters[t.currentSlot].user_id : null, t.currentSlot);
+    const pos = `R${t.currentRound}.${pickInRound(t.current, cfg.teams)}`;
+    if (t.isUserTurn) {
+      main = `<span class="yourpick">YOUR PICK</span> #${t.current} (${pos})`;
+      const pair = t.userPicks.filter((p) => p > t.current && p <= t.current + 1);
+      sub = pair.length ? `You also pick #${pair[0]} next. Then ${t.futureTurns[0] ? t.futureTurns[0].join('/') : '-'}.` : `Then ${t.futureTurns[0] ? t.futureTurns[0].join('/') : '-'}.`;
+    } else {
+      main = `Pick #${t.current} (${pos}): ${esc(onClock)}`;
+      sub = t.nextUserPick ? `Your next: #${t.nextUserPick}, ${t.picksUntilUser} pick${t.picksUntilUser === 1 ? '' : 's'} away` : 'No picks left for you';
+    }
+  }
+  const cd = countdownText();
+  return `<div class="hdr"><div class="grow"><div class="hdr-main">${main}</div><div class="hdr-sub muted">${sub} ${badge}</div></div>${cd ? `<div class="countdown" id="countdown">${cd}</div>` : '<div id="countdown"></div>'}</div>
+    <div class="hdr-league muted">${esc(name)} <span id="updated">${live.lastFetch ? `updated ${fmtAgo(live.lastFetch)}` : ''}</span></div>`;
 }
 
-function renderPlaceholder(tab) {
-  const label = TABS.find((t) => t[0] === tab)[1];
-  if (!state.leagueId) return `<div class="placeholder">Select a league in Settings to use ${esc(label)}.</div>`;
-  if (!state.parsed.projections) return `<div class="placeholder">Upload the projections CSV in Settings to use ${esc(label)}.</div>`;
-  return `<div class="placeholder">${esc(label)} arrives in a later step.</div>`;
-}
-
-export function render() {
+function renderHeaderOnly() {
   $('header').innerHTML = renderHeader();
+}
+
+setInterval(() => {
+  const cd = $('countdown');
+  if (cd) cd.textContent = countdownText();
+  const up = $('updated');
+  if (up && state.live && state.live.lastFetch) up.textContent = `updated ${fmtAgo(state.live.lastFetch)}`;
+}, 1000);
+
+// ---- rendering ----
+export function render() {
+  const y = window.scrollY;
+  renderHeaderOnly();
   const screen = $('screen');
   if (state.tab === 'settings') screen.innerHTML = renderSettings(state);
   else if (state.tab === 'board') screen.innerHTML = renderBoard(state);
-  else screen.innerHTML = renderPlaceholder(state.tab);
+  else if (state.tab === 'draft') screen.innerHTML = renderDraftLog(state);
+  else if (state.tab === 'team') screen.innerHTML = renderTeam(state);
   $('tabbar').innerHTML = TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" aria-selected="${state.tab === id}">${label}</button>`).join('');
+  window.scrollTo(0, y);
 }
 
 // ---- files: upload, persist, parse ----
@@ -250,6 +311,134 @@ export function rebuild() {
   }
 }
 
+// ---- live loop / replay ----
+function stopLive() {
+  if (state.live) {
+    if (state.live.loop) state.live.loop.stop();
+    if (state.live.replay && state.live.replay.timer) clearInterval(state.live.replay.timer);
+  }
+  state.live = null;
+  state.taken = new Set();
+}
+
+function makeLive(mode, source, draft, extra = {}) {
+  const userId = currentUserId();
+  const loop = new DraftLoop({
+    source,
+    intervalMs: 3000,
+    onPicks: applyPicks,
+    onError: (e, reason) => {
+      if (!state.live) return;
+      state.live.errors++;
+      log(`picks fetch failed (${reason}): ${e.message}`);
+      renderHeaderOnly();
+    },
+    log,
+  });
+  state.live = {
+    mode,
+    source,
+    loop,
+    picks: [],
+    draft,
+    turn: turnInfo({ picks: [], draft, userId }),
+    rosters: rostersFromPicks([], draft),
+    lastFetch: null,
+    errors: 0,
+    isUserTurn: false,
+    ...extra,
+  };
+  loop.start();
+}
+
+function startLive() {
+  stopLive();
+  const d = state.bundle && state.bundle.draft;
+  if (!d) return;
+  makeLive('live', new LiveSource(d.draft_id), d);
+  log(`live loop started for draft ${d.draft_id} (${d.status})`);
+}
+
+async function startReplay() {
+  const league = state.bundle && state.bundle.league;
+  const prev = league && league.previous_league_id;
+  if (!prev) {
+    toast('This league has no previous season to replay.');
+    return;
+  }
+  state.busy.replay = 'Loading last season draft';
+  render();
+  try {
+    const drafts = await api.getLeagueDrafts(prev);
+    const d = (drafts || []).find((x) => x.status === 'complete') || (drafts || [])[0];
+    if (!d) throw new Error('no draft found for the previous league');
+    const picks = await api.getDraftPicks(d.draft_id);
+    stopLive();
+    makeLive('replay', new ReplaySource(picks, d), d, { replay: { season: d.season, auto: false, timer: null } });
+    log(`replay loaded: ${d.season} draft ${d.draft_id}, ${picks.length} picks, your slot ${userSlot(d, currentUserId())}`);
+    state.tab = 'board';
+  } catch (e) {
+    log(`replay load failed: ${e.message}`);
+    toast(`Replay failed: ${e.message}`);
+  }
+  state.busy.replay = null;
+  render();
+}
+
+function replayStep(k) {
+  const live = state.live;
+  if (!live || live.mode !== 'replay') return;
+  live.source.step(k);
+  live.loop.refresh('replay');
+}
+
+function replayAuto(on) {
+  const live = state.live;
+  if (!live || live.mode !== 'replay') return;
+  if (live.replay.timer) clearInterval(live.replay.timer);
+  live.replay.timer = null;
+  live.replay.auto = on;
+  if (on) {
+    live.replay.timer = setInterval(() => {
+      if (!state.live || state.live.mode !== 'replay' || state.live.source.n >= state.live.source.total) {
+        replayAuto(false);
+        render();
+        return;
+      }
+      replayStep(1);
+    }, 1200);
+  }
+}
+
+// Called by the loop after every fetch; re-renders when picks changed.
+function applyPicks({ picks, fresh, changed, reason, draft }) {
+  const live = state.live;
+  if (!live) return;
+  const d = draft || live.draft;
+  live.draft = d;
+  live.picks = picks;
+  live.lastFetch = Date.now();
+  live.errors = 0;
+  const userId = currentUserId();
+  live.turn = turnInfo({ picks, draft: d, userId });
+  live.rosters = rostersFromPicks(picks, d);
+  state.taken = new Set(picks.map((p) => String(p.player_id)));
+  const first = !live.seen;
+  live.seen = true;
+  if (changed || first) {
+    const wasTurn = live.isUserTurn;
+    live.isUserTurn = live.turn.isUserTurn;
+    if (fresh.length) {
+      const last = fresh.slice(-3).map((p) => `#${p.pick_no} ${p.metadata ? `${p.metadata.first_name} ${p.metadata.last_name}` : p.player_id}`);
+      log(`${fresh.length} new pick(s) via ${reason}: ${last.join(', ')}`);
+    }
+    if (live.turn.isUserTurn && !wasTurn && picks.length) toast(`Your pick: #${live.turn.current}`, 'info', 4000);
+    render();
+  } else {
+    renderHeaderOnly();
+  }
+}
+
 // ---- actions ----
 const actions = {
   async recheck() {
@@ -259,6 +448,7 @@ const actions = {
   },
   async 'select-league'(btn) {
     const id = btn.dataset.id;
+    stopLive();
     state.leagueId = id;
     state.settings.leagueId = id;
     saveSettings();
@@ -280,6 +470,7 @@ const actions = {
   },
   async 'clear-all'() {
     if (!confirm('Clear all app data on this device?')) return;
+    stopLive();
     await clearAll();
     location.reload();
   },
@@ -335,6 +526,47 @@ const actions = {
     rebuild();
     render();
   },
+  'draft-view'(btn) {
+    state.draftView = btn.dataset.view;
+    render();
+  },
+  'draft-filter'(btn) {
+    state.draftFilter = btn.dataset.pos;
+    render();
+  },
+  'draft-sort'(btn) {
+    state.draftSort = btn.dataset.sort;
+    render();
+  },
+  async 'live-refresh'() {
+    if (state.live) await state.live.loop.refresh('manual');
+    else startLive();
+    render();
+  },
+  'live-start'() {
+    startLive();
+    render();
+  },
+  async 'replay-start'() {
+    await startReplay();
+  },
+  'replay-step'(btn) {
+    replayStep(Number(btn.dataset.k || 1));
+  },
+  'replay-auto'() {
+    replayAuto(!(state.live && state.live.replay && state.live.replay.auto));
+    render();
+  },
+  'replay-reset'() {
+    if (!state.live || state.live.mode !== 'replay') return;
+    replayAuto(false);
+    state.live.source.jumpTo(0);
+    state.live.loop.refresh('replay');
+  },
+  'replay-exit'() {
+    startLive();
+    render();
+  },
 };
 
 function setOverride(key, value) {
@@ -360,6 +592,7 @@ function bindEvents() {
     const tabBtn = e.target.closest('[data-tab]');
     if (tabBtn) {
       state.tab = tabBtn.dataset.tab;
+      window.scrollTo(0, 0);
       render();
       return;
     }
@@ -450,6 +683,10 @@ async function refreshLeague() {
     toast(`League refresh failed: ${e.message}`);
   }
   rebuild();
+  // (Re)start the live loop unless a replay is running or the same draft is already live.
+  const d = state.bundle && state.bundle.draft;
+  const sameDraft = state.live && state.live.mode === 'live' && d && state.live.draft && state.live.draft.draft_id === d.draft_id;
+  if (d && !sameDraft && !(state.live && state.live.mode === 'replay')) startLive();
   render();
 }
 
@@ -489,6 +726,8 @@ async function init() {
   if (state.settings.userId) state.user = { user_id: state.settings.userId, username: state.settings.username };
   loadFiles();
   bindEvents();
+  rebuild();
+  if (state.bundle && state.bundle.draft) startLive();
   render();
   log(`app start ${location.href}`);
   await Promise.all([connect(), loadPlayers(false)]);

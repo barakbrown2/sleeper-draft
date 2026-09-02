@@ -203,7 +203,67 @@ async function sectionFixture() {
   check(top[0].pos === 'RB' && top.slice(0, 2).every((p) => p.pos === 'RB'), 'Gibbs/Bijan lead the blended board (plan section 9)');
 }
 
-const sections = { match: sectionMatch, fixture: sectionFixture };
+async function sectionReplay() {
+  console.log('\n== replay: 2025 draft through the pure draft logic ==');
+  const { turnInfo, rostersFromPicks, picksForSlot, slotForPick } = await import('../src/draft.js');
+  const { ReplaySource } = await import('../src/live.js');
+  const league = await getJSON(`https://api.sleeper.app/v1/league/${LEAGUE1}`, 'league1');
+  const draft26 = await getJSON(`https://api.sleeper.app/v1/draft/${DRAFT1}`, 'draft1');
+  const drafts = await getJSON(`https://api.sleeper.app/v1/league/${league.previous_league_id}/drafts`, 'drafts2025');
+  const d25 = drafts.find((x) => x.status === 'complete') || drafts[0];
+  const picks = await getJSON(`https://api.sleeper.app/v1/draft/${d25.draft_id}/picks`, 'picks2025');
+  const userId = '574323656180514816';
+  const src = new ReplaySource(picks, d25);
+  const slot = d25.draft_order[userId];
+  const expectTurns = picksForSlot(slot, d25.settings.teams, d25.settings.rounds, { type: d25.type, reversalRound: d25.settings.reversal_round });
+  console.log(`  ${d25.season} draft ${d25.draft_id}: ${src.total} picks, user slot ${slot}, expected user picks ${expectTurns.join(',')}`);
+  const firedAt = [];
+  let wrongSlot = 0;
+  for (let n = 0; n <= src.total; n++) {
+    src.jumpTo(n);
+    const cur = await src.fetchPicks();
+    const t = turnInfo({ picks: cur, draft: d25, userId });
+    if (t.isUserTurn) firedAt.push(t.current);
+    if (n < src.total) {
+      const next = picks.find((p) => p.pick_no === n + 1);
+      if (next && slotForPick(next.pick_no, d25.settings.teams, { type: d25.type, reversalRound: d25.settings.reversal_round }) !== next.draft_slot) wrongSlot++;
+    }
+  }
+  const uniq = [...new Set(firedAt)];
+  check(JSON.stringify(uniq) === JSON.stringify(expectTurns), `turn detection fired at exactly the user's picks (${uniq.join(',')})`);
+  check(wrongSlot === 0, `snake math matches draft_slot for all ${src.total} real picks`);
+  src.jumpTo(src.total);
+  const all = await src.fetchPicks();
+  const tEnd = turnInfo({ picks: all, draft: d25, userId });
+  check(tEnd.complete, 'draft marked complete after the last pick');
+  const rosters = rostersFromPicks(all, d25);
+  const sizes = Object.values(rosters).map((r) => r.players.length);
+  check(sizes.every((s) => s === d25.settings.rounds), `every team has ${d25.settings.rounds} players (${sizes.join(',')})`);
+  // Mid-draft check at pick 37 (user's 4th pick in 2025).
+  src.jumpTo(36);
+  const t37 = turnInfo({ picks: await src.fetchPicks(), draft: d25, userId });
+  check(t37.current === 37 && t37.isUserTurn && t37.futureTurns[0][0] === 44 && t37.futureTurns[1][0] === 57, `at pick 37: user turn, future turns start at 44 and 57 (got ${t37.futureTurns.slice(0, 2).map((x) => x[0]).join('/')})`);
+  const t1 = turnInfo({ picks: [], draft: draft26, userId });
+  check(t1.slot === 1 && t1.isUserTurn && t1.futureTurns[0].join('/') === '20/21' && t1.futureTurns[1].join('/') === '40/41', `2026 draft at pick 1: slot 1 on the clock, next turns 20/21 and 40/41`);
+  // Coverage: how many 2025 picks map into the 2026 pool.
+  const players = await loadPlayers();
+  const index = buildPlayerIndex(players);
+  const proj = parseProjections(findDoc(/Projections/i));
+  const rank = parseRankings(findDoc(/rankings-export/i));
+  const model = buildPool({
+    matchProj: matchRows(proj.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
+    matchRank: matchRows(rank.rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos)), index),
+    rankAnalysts: rank.analysts,
+    league,
+    draft: draft26,
+  });
+  const inPool = all.filter((p) => model.byId.has(String(p.player_id))).length;
+  console.log(`  ${inPool} of ${all.length} 2025 picks are in the 2026 pool (the rest are unprojected/retired players and still count as taken)`);
+  const top100 = [...model.pool].sort((a, b) => b.value - a.value).slice(0, 100);
+  check(top100.every((p) => p.player_id && players[p.player_id]), 'top 100 board players all carry Sleeper ids');
+}
+
+const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay };
 const want = process.argv.slice(2);
 const run = want.length ? want : Object.keys(sections);
 for (const s of run) {

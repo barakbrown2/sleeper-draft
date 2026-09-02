@@ -84,8 +84,10 @@ export function turnInfo({ picks, draft, userId }) {
   const userPicks = slot ? picksForSlot(slot, cfg.teams, cfg.rounds, opts) : [];
   const upcoming = current ? userPicks.filter((p) => p >= current) : [];
   const isUserTurn = current != null && slot != null && slotForPick(current, cfg.teams, opts) === slot;
-  // Next user turns strictly after the current pick (used by the survival sim).
-  const futureTurns = groupTurns(current ? userPicks.filter((p) => p > current) : []);
+  // The user's turns (snake pairs) that start after the current pick. At
+  // pick 20 of a 20/21 pair this is [[40,41],[60,61]], which is what the
+  // survival sim and the "will he be there" display need.
+  const futureTurns = current ? groupTurns(userPicks).filter((t) => t[0] > current) : [];
   return {
     cfg,
     slot,

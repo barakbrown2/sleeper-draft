@@ -114,7 +114,76 @@ input[type='file'] {
   z-index: 10;
   background: var(--card);
   border-bottom: 1px solid var(--line);
-  padding: calc(env(safe-area-inset-top) + 8px) 12px 8px;
+  padding: calc(env(safe-area-inset-top) + 8px) 12px 6px;
+}
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hdr .grow {
+  flex: 1;
+  min-width: 0;
+}
+.hdr-main {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+.hdr-sub {
+  font-size: 15px;
+}
+.hdr-league {
+  font-size: 13px;
+  margin-top: 2px;
+}
+.yourpick {
+  color: #fff;
+  background: var(--green);
+  border-radius: 6px;
+  padding: 1px 6px;
+}
+.countdown {
+  font-size: 26px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 64px;
+  text-align: right;
+}
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #000;
+  background: var(--amber);
+  border-radius: 6px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+.badge.bad {
+  background: var(--red);
+  color: #fff;
+}
+.prow.mine {
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  margin: 0 -12px;
+  padding-left: 12px;
+  padding-right: 12px;
+}
+.you {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--green);
+}
+.teamrow {
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+.slotname {
+  flex: 0 0 44px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--muted);
 }
 #screen {
   padding: 12px 12px calc(env(safe-area-inset-bottom) + var(--tab-h) + 24px);

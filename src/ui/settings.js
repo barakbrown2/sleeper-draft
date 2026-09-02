@@ -8,6 +8,7 @@ export function renderSettings(state) {
     connectionCard(state),
     leagueCard(state),
     state.bundle ? leagueSummaryCard(state) : '',
+    state.bundle ? liveCard(state) : '',
     filesCard(state),
     unmatchedCard(state),
     valueCard(state),
@@ -121,6 +122,43 @@ function leagueSummaryCard(state) {
       <div>Refreshed</div><div>${fmtAgo(fetchedAt)}</div>
     </div>
     <button class="btn" data-action="refresh-league">Refresh league</button>
+  </section>`;
+}
+
+function liveCard(state) {
+  const live = state.live;
+  const prev = state.bundle.league.previous_league_id;
+  if (state.busy.replay) return `<section class="card"><h2>Live draft and replay</h2><p class="muted">${esc(state.busy.replay)}</p></section>`;
+  if (live && live.mode === 'replay') {
+    const s = live.source;
+    return `<section class="card warn"><h2>Replay ${esc(live.replay.season)} draft</h2>
+      <p>Pick <b>${s.n}</b> of ${s.total}${live.turn.slot != null ? `, you were slot ${live.turn.slot}` : ''}. Board, My Team and Draft show the replay state.</p>
+      <div class="btnrow">
+        <button class="btn primary" data-action="replay-step" data-k="1">Step 1</button>
+        <button class="btn" data-action="replay-step" data-k="5">Step 5</button>
+        <button class="btn" data-action="replay-step" data-k="-1">Back 1</button>
+        <button class="btn" data-action="replay-auto">${live.replay.auto ? 'Pause auto' : 'Auto play'}</button>
+        <button class="btn" data-action="replay-reset">Reset</button>
+        <button class="btn danger" data-action="replay-exit">Exit replay</button>
+      </div>
+    </section>`;
+  }
+  const d = state.bundle.draft;
+  let status;
+  if (!d) status = '<p class="muted">This league has no draft object yet.</p>';
+  else if (!live) status = '<p class="muted">Live loop not running.</p><button class="btn" data-action="live-start">Start live loop</button>';
+  else
+    status = `<div class="kv">
+      <div>Polling</div><div>every 3 s while visible</div>
+      <div>Last update</div><div>${live.lastFetch ? fmtAgo(live.lastFetch) : '-'}</div>
+      <div>Picks seen</div><div>${live.picks.length}</div>
+      <div>Draft status</div><div>${esc(live.draft ? live.draft.status : '-')}</div>
+      <div>Fetch errors</div><div>${live.errors}</div>
+    </div>
+    <button class="btn" data-action="live-refresh">Refresh now</button>`;
+  return `<section class="card"><h2>Live draft and replay</h2>${status}
+    <p class="muted small">Replay steps through last season's draft (${prev ? 'previous league found' : 'no previous league'}) to test the board, turn detection and rosters without a live draft.</p>
+    <button class="btn" data-action="replay-start" ${prev ? '' : 'disabled'}>Load replay of last season</button>
   </section>`;
 }
 
