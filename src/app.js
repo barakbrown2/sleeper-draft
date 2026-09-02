@@ -15,6 +15,9 @@ import { renderTeam } from './ui/team.js';
 import { renderDetail } from './ui/detail.js';
 import { checkForUpdate, VERSION } from './update.js';
 import { SimClient, buildSimInput, DEFAULT_SIM_SETTINGS } from './sim.js';
+import { computePlan, tierWatch, tierAlarms } from './plan.js';
+import { userNeedMultipliers } from './lineup.js';
+import { myPlayers } from './ui/team.js';
 import { esc as escHtml } from './ui/dom.js';
 
 const DEFAULT_SETTINGS = {
@@ -80,6 +83,10 @@ export const state = {
   simClient: null,
   simSettings: null,
   simSeq: 0,
+  plan: null,
+  planClient: null,
+  planBusy: false,
+  need: null,
   banner: '',
   waitOn: null,
   version: VERSION,
@@ -409,7 +416,64 @@ export function rebuild() {
       toast(`Value model failed: ${e.message}`);
     }
   }
+  applyNeed();
   if (state.live) runSim('model');
+}
+
+// Roster-need multipliers for the user's own roster (plan section 9.1):
+// adjValue = blended value x need. Tiers stay on the raw value.
+function applyNeed() {
+  const model = state.model;
+  if (!model) {
+    state.need = null;
+    return;
+  }
+  const rp = (state.bundle && state.bundle.league.roster_positions) || [];
+  const mine = state.live ? myPlayers(state) : [];
+  const { mult, open, needPositions } = userNeedMultipliers(rp, mine);
+  state.need = { mult, open, needPositions, hasRoster: !!state.live && mine.length > 0 };
+  for (const p of model.pool) {
+    p.needMult = state.need.hasRoster && mult[p.pos] != null ? mult[p.pos] : 1;
+    p.adjValue = p.value * p.needMult;
+  }
+}
+
+const adjValueOf = (p) => (p.adjValue != null ? p.adjValue : p.value);
+
+// ---- pre-draft plan (plan section 7): expected best at each of the next turns ----
+async function runPlan(reason) {
+  const live = state.live;
+  if (!live || !state.model || !state.planClient) {
+    state.plan = null;
+    return;
+  }
+  const input = buildSimInput({
+    model: state.model,
+    picks: live.picks,
+    draft: live.draft,
+    userId: currentUserId(),
+    taken: state.taken,
+    settings: state.simSettings,
+    seed: (Date.now() ^ 0x5bd1e995) & 0x7fffffff,
+    horizonsCount: 7,
+  });
+  if (!input) {
+    state.plan = null;
+    return;
+  }
+  state.planBusy = true;
+  if (state.tab === 'board') render();
+  const result = await state.planClient.run(input, { N: 300, adapt: false });
+  state.planBusy = false;
+  if (!result) return;
+  const taken = state.taken;
+  const model = state.model;
+  const plan = computePlan({ model, taken, survival: result.survival, horizons: result.horizons, valueFn: adjValueOf });
+  const tiers = {};
+  for (const pos of ['QB', 'RB', 'WR', 'TE']) tiers[pos] = tierWatch({ model, taken, survival: result.survival, horizons: result.horizons, pos, maxTiers: 2 });
+  state.plan = { ...plan, tiers, horizonsInfo: input.horizonsInfo, atPick: input.currentPick, N: result.N, ms: result.ms, at: Date.now() };
+  log(`plan (${reason}): N=${result.N} ${result.ms} ms, ${input.picks.length} picks, turns ${result.horizons.join('/')}`);
+  if (state.tab === 'board') render();
 }
 
 // ---- survival sim (plan section 7) and the signals derived from it ----
@@ -443,7 +507,8 @@ async function runSim(reason) {
   if (state.tab === 'board' || state.detailId) render();
 }
 
-// QB-run banner + per-position "you can wait on X" + cost of waiting.
+// Banner (QB run + tier cliffs at every position you can still start),
+// per-position "you can wait on X", and cost of waiting. Uses need-adjusted value.
 function deriveSignals() {
   state.banner = '';
   state.waitOn = null;
@@ -458,20 +523,19 @@ function deriveSignals() {
   const taken = state.taken;
   if (sim && sim.survival) {
     const avail = state.model.pool.filter((p) => !taken.has(p.player_id));
-    // Expected best value per position at the next turn, assuming independent survival.
-    const expBest = {};
     const byPos = {};
     for (const p of avail) (byPos[p.pos] = byPos[p.pos] || []).push(p);
+    const expBest = {};
     const waitOn = {};
     for (const pos in byPos) {
-      const list = byPos[pos].sort((a, b) => b.value - a.value);
+      const list = byPos[pos].sort((a, b) => adjValueOf(b) - adjValueOf(a));
       let remainProb = 1;
       let exp = 0;
       let best = null;
       for (const p of list) {
         const s = sim.survival[p.player_id];
         const sp = s ? s[0] : 0;
-        exp += p.value * sp * remainProb;
+        exp += adjValueOf(p) * sp * remainProb;
         remainProb *= 1 - sp;
         if (!best && sp >= 0.5) best = { player: p, p: sp };
         if (remainProb < 0.001) break;
@@ -479,17 +543,15 @@ function deriveSignals() {
       expBest[pos] = exp;
       if (best) waitOn[pos] = best;
     }
-    for (const p of avail) p.costOfWaiting = expBest[p.pos] != null ? p.value - expBest[p.pos] : null;
+    for (const p of avail) p.costOfWaiting = expBest[p.pos] != null ? adjValueOf(p) - expBest[p.pos] : null;
     state.waitOn = waitOn;
-    // Last QB in the current top tier likely gone before the user's next turn.
-    const qbList = (byPos.QB || []).sort((a, b) => b.value - a.value);
-    if (qbList.length) {
-      const tier = qbList[0].tier;
-      const tierQBs = qbList.filter((q) => q.tier === tier);
-      const lastQB = tierQBs[tierQBs.length - 1];
-      const s = sim.survival[lastQB.player_id];
-      if (s && s[0] < 0.4 && !live.turn.isUserTurn) msgs.push(`QB tier ${tier} is emptying: ${lastQB.name} has ${Math.round(s[0] * 100)}% to reach your pick #${sim.horizons[0]}.`);
-      else if (s && s[0] < 0.4 && live.turn.isUserTurn) msgs.push(`QB tier ${tier} will not last to #${sim.horizons[0]}: ${lastQB.name} ${Math.round(s[0] * 100)}%.`);
+    // Tier cliffs: current top tier at each startable position that will not last to the next turn.
+    const needPositions = state.need && state.need.hasRoster ? state.need.needPositions : null;
+    const alarms = tierAlarms({ model: state.model, taken, survival: sim.survival, nextPick: sim.horizons[0], needPositions });
+    for (const a of alarms.slice(0, 3)) {
+      const left = a.left === 1 ? `only ${a.last.name} left` : `${a.left} left, last is ${a.last.name}`;
+      const drop = a.dropToNext != null ? ` Next tier is ${Math.round(a.dropToNext)} pts lower.` : '';
+      msgs.push(`${a.pos} tier ${a.tier} will not last to #${a.nextPick} (${left}, ${Math.round(a.pLast * 100)}%).${drop}`);
     }
   }
   if (msgs.length) state.banner = `<div class="banner">${msgs.map((m) => escHtml(m)).join('<br>')}</div>`;
@@ -504,6 +566,7 @@ function stopLive() {
   state.live = null;
   state.taken = new Set();
   state.sim = null;
+  state.plan = null;
   state.banner = '';
   state.waitOn = null;
 }
@@ -647,9 +710,11 @@ function applyPicks({ picks, fresh, changed, reason, draft, loop }) {
       log(`${fresh.length} new pick(s) via ${reason}: ${last.join(', ')}`);
     }
     if (live.turn.isUserTurn && !wasTurn && picks.length) toast(`Your pick: #${live.turn.current}`, 'info', 4000);
+    applyNeed();
     deriveSignals();
     render();
     runSim(reason);
+    if (first && d.status !== 'complete') runPlan('start');
   } else {
     renderHeaderOnly();
   }
@@ -741,6 +806,14 @@ const actions = {
   },
   'rerun-sim'() {
     runSim('manual');
+  },
+  'run-plan'() {
+    runPlan('manual');
+  },
+  'toggle-plan'(btn) {
+    // <details> toggles itself; remember the state so re-renders keep it.
+    const det = btn.closest('details');
+    state.planOpen = det ? !det.open : !state.planOpen;
   },
   'remove-file'(btn) {
     const k = btn.dataset.file;
@@ -867,7 +940,7 @@ function bindEvents() {
     if (!btn) return;
     const fn = actions[btn.dataset.action];
     if (!fn) return;
-    e.preventDefault();
+    if (btn.tagName !== 'SUMMARY') e.preventDefault();
     Promise.resolve(fn(btn)).catch((err) => {
       log(`action ${btn.dataset.action} failed: ${err && err.message ? err.message : err}`);
       toast(String(err && err.message ? err.message : err));
@@ -995,6 +1068,7 @@ async function init() {
   loadFiles();
   bindEvents();
   state.simClient = new SimClient({ log });
+  state.planClient = new SimClient({ log });
   state.storageInfo = detectStorage();
   rebuild();
   if (state.bundle && state.bundle.draft) startLive();

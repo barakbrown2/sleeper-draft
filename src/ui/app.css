@@ -248,6 +248,51 @@ body.noscroll {
   color: var(--green);
   background: color-mix(in srgb, var(--green) 15%, transparent);
 }
+.tag.depth {
+  color: var(--muted);
+  background: var(--card2);
+}
+details.plan summary {
+  list-style: none;
+}
+details.plan summary::before {
+  content: '\25B8';
+  display: inline-block;
+  width: 18px;
+  color: var(--muted);
+}
+details.plan[open] summary::before {
+  content: '\25BE';
+}
+.tablewrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 6px 0;
+}
+.plantable {
+  border-collapse: collapse;
+  font-size: 15px;
+  min-width: 100%;
+}
+.plantable th,
+.plantable td {
+  padding: 5px 6px;
+  text-align: center;
+  white-space: nowrap;
+  border-top: 1px solid var(--line);
+}
+.plantable thead th {
+  border-top: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+.plantable tbody th {
+  text-align: left;
+}
+.tierline {
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
 .banner {
   background: var(--amber);
   color: #000;

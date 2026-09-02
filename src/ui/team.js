@@ -1,48 +1,9 @@
 // src/ui/team.js - My Team screen: roster slots filled vs open, projected
-// starter total, positional needs. Pure lineup helper is exported for the sim.
+// starter total, positional needs.
 import { esc, posClass, n1 } from './dom.js';
+import { computeLineup } from '../lineup.js';
 
-export const SLOT_ELIGIBLE = {
-  QB: ['QB'],
-  RB: ['RB'],
-  WR: ['WR'],
-  TE: ['TE'],
-  K: ['K'],
-  DEF: ['DEF'],
-  FLEX: ['RB', 'WR', 'TE'],
-  SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'],
-  REC_FLEX: ['WR', 'TE'],
-  WRRB_FLEX: ['RB', 'WR'],
-  WRRB_TE_FLEX: ['RB', 'WR', 'TE'],
-  IDP_FLEX: ['DL', 'LB', 'DB'],
-  DL: ['DL'],
-  LB: ['LB'],
-  DB: ['DB'],
-};
-
-export function starterSlots(rosterPositions) {
-  return (rosterPositions || []).filter((s) => s !== 'BN' && s !== 'IR' && s !== 'TAXI');
-}
-
-// Greedy lineup: dedicated slots first by projected points, then flex slots.
-export function computeLineup(rosterPositions, players) {
-  const slots = starterSlots(rosterPositions);
-  const remaining = [...players].sort((a, b) => (b.lgPts || 0) - (a.lgPts || 0));
-  const lineup = slots.map((s) => ({ slot: s, player: null }));
-  for (const l of lineup) {
-    const el = SLOT_ELIGIBLE[l.slot] || [];
-    if (el.length !== 1) continue;
-    const i = remaining.findIndex((p) => el.includes(p.pos));
-    if (i >= 0) l.player = remaining.splice(i, 1)[0];
-  }
-  for (const l of lineup) {
-    if (l.player) continue;
-    const el = SLOT_ELIGIBLE[l.slot] || [];
-    const i = remaining.findIndex((p) => el.includes(p.pos));
-    if (i >= 0) l.player = remaining.splice(i, 1)[0];
-  }
-  return { lineup, bench: remaining };
-}
+export { computeLineup, SLOT_ELIGIBLE, starterSlots } from '../lineup.js';
 
 // Players on the user's roster as pool entries (or stubs for unprojected picks).
 export function myPlayers(state) {

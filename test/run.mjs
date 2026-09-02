@@ -384,7 +384,54 @@ async function sectionLeague2() {
   check(top.every((p) => p.pos !== 'QB'), '1QB: no QB in the top 12 by value');
 }
 
-const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim, league2: sectionLeague2 };
+async function sectionPlan() {
+  console.log('\n== plan: tier watch, alarms, roster need ==');
+  const { computePlan, tierWatch, tierAlarms } = await import('../src/plan.js');
+  const { userNeedMultipliers, computeLineup } = await import('../src/lineup.js');
+  await import('../src/simcore.js');
+  const { buildSimInput } = await import('../src/sim.js');
+  const league = await getJSON(`https://api.sleeper.app/v1/league/${LEAGUE1}`, 'league1');
+  const draft26 = await getJSON(`https://api.sleeper.app/v1/draft/${DRAFT1}`, 'draft1');
+  const players = await loadPlayers();
+  const index = buildPlayerIndex(players);
+  const proj = parseProjections(findDoc(/Projections/i));
+  const rank = rankingsByFormat('superflex');
+  const skill = (rows) => rows.filter((r) => ['QB', 'RB', 'WR', 'TE'].includes(r.pos));
+  const model = buildPool({ matchProj: matchRows(skill(proj.rows), index), matchRank: matchRows(skill(rank.rows), index), rankAnalysts: rank.analysts, league, draft: draft26 });
+  const userId = '574323656180514816';
+  const input = buildSimInput({ model, picks: [], draft: draft26, userId, taken: new Set(), settings: {}, seed: 99, horizonsCount: 7 });
+  check(input.horizons.join('/') === '20/40/60/80/100/120/140', `plan horizons from pick 1: ${input.horizons.join('/')}`);
+  const r = globalThis.SimCore.runSim({ ...input, N: 600 });
+  console.log(`  whole-draft sim: N=${r.N}, ${input.picks.length} picks, ${r.ms} ms`);
+  const taken = new Set();
+  const plan = computePlan({ model, taken, survival: r.survival, horizons: r.horizons });
+  check(plan.byPos.RB.length === 7 && plan.byPos.RB[0].expBest > 90 && plan.byPos.RB[0].expBest < 125, `expected best RB at #20 = ${plan.byPos.RB[0].expBest.toFixed(1)} (Walker/Cook range)`);
+  check(plan.byPos.TE[0].expBest > 80, `expected best TE at #20 = ${plan.byPos.TE[0].expBest.toFixed(1)} (tier 1 still there)`);
+  const te = tierWatch({ model, taken, survival: r.survival, horizons: r.horizons, pos: 'TE', maxTiers: 2 });
+  console.log(`  TE T${te[0].tier} (${te[0].members.map((m) => m.name).join(', ')}): expected left ${te[0].expectedLeft.map((x) => x.toFixed(1)).join('/')}, P(any) ${te[0].pAny.map((x) => Math.round(x * 100)).join('/')}%, drop ${te[0].dropToNext.toFixed(0)}`);
+  check(te[0].pAny[1] > 0.6 && te[0].pAny[2] < 0.15 && te[0].dropToNext > 30, 'TE tier 1 likely at #40, gone by #60, with a 30+ pt cliff behind it');
+  const qb = tierWatch({ model, taken, survival: r.survival, horizons: r.horizons, pos: 'QB', maxTiers: 3 });
+  const band = qb.find((t) => t.members.length >= 10);
+  check(band && band.expectedLeft[1] > 2 && band.expectedLeft[3] < 0.3, `QB band tier ${band ? band.tier : '-'}: ${band ? band.expectedLeft.map((x) => x.toFixed(1)).join('/') : '-'} left at #20..#140`);
+  const alarms = tierAlarms({ model, taken, survival: r.survival, nextPick: 20, needPositions: null });
+  console.log(`  alarms at pick 1 for #20: ${alarms.map((a) => `${a.pos} T${a.tier} (${a.left} left, ${a.last.name} ${Math.round(a.pLast * 100)}%, drop ${a.dropToNext == null ? '-' : a.dropToNext.toFixed(0)})`).join('; ') || 'none'}`);
+  check(alarms.some((a) => a.pos === 'RB') && alarms.some((a) => a.pos === 'QB') && !alarms.some((a) => a.pos === 'TE'), 'alarms at pick 1: RB and QB tier 1 gone by #20, TE tier 1 not alarmed');
+  // Roster need multipliers.
+  const rp = league.roster_positions;
+  const mk = (pos, pts) => ({ pos, lgPts: pts, name: pos });
+  let nm = userNeedMultipliers(rp, []);
+  check(nm.mult.QB === 1 && nm.mult.RB === 1 && nm.mult.TE === 1, 'empty roster: all positions x1.0');
+  nm = userNeedMultipliers(rp, [mk('QB', 300)]);
+  check(nm.mult.QB === 0.9, `one QB: QB x${nm.mult.QB} (superflex slot still open)`);
+  nm = userNeedMultipliers(rp, [mk('QB', 300), mk('QB', 290)]);
+  check(nm.mult.QB === 0.55 && nm.mult.RB === 1, `two QBs: QB x${nm.mult.QB}, RB x${nm.mult.RB}`);
+  nm = userNeedMultipliers(rp, [mk('RB', 300), mk('RB', 290), mk('WR', 280), mk('WR', 270), mk('WR', 260), mk('TE', 200), mk('RB', 150)]);
+  check(nm.mult.RB === 0.9 && nm.mult.TE === 0.9 && nm.mult.QB === 1, `RB/WR/TE starters full, FLEX taken by RB3: RB x${nm.mult.RB}, TE x${nm.mult.TE}, QB x${nm.mult.QB} (SF open)`);
+  const { lineup } = computeLineup(rp, [mk('QB', 300), mk('QB', 290)]);
+  check(lineup.find((l) => l.slot === 'SUPER_FLEX').player && lineup.find((l) => l.slot === 'SUPER_FLEX').player.pos === 'QB', 'second QB fills the SUPER_FLEX slot');
+}
+
+const sections = { match: sectionMatch, fixture: sectionFixture, replay: sectionReplay, sim: sectionSim, league2: sectionLeague2, plan: sectionPlan };
 const want = process.argv.slice(2);
 const run = want.length ? want : Object.keys(sections);
 for (const s of run) {

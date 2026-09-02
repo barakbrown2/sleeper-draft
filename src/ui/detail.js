@@ -68,6 +68,7 @@ export function renderDetail(state, p) {
       <div>Blended rank</div><div>${p.blendedRank != null ? n1(p.blendedRank) : '-'}</div>
       <div>VORP from rank</div><div>${p.vorpRank != null ? n1(p.vorpRank) : '-'}</div>
       <div>Blended value</div><div><b>${n1(p.value)}</b></div>
+      ${p.needMult != null && p.needMult !== 1 ? `<div>Roster need multiplier</div><div>x${p.needMult.toFixed(2)}</div><div>Value for your roster</div><div><b>${n1(p.adjValue)}</b></div>` : ''}
     </div>
     <h3>Analyst ranks</h3>
     <div class="kv">${ranks}${p.consensus != null ? `<div>Consensus</div><div>${p.consensus}</div>` : ''}</div>

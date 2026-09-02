@@ -29,11 +29,12 @@ export class SimClient {
   }
 
   // Resolves with the result of the most recent request; older queued
-  // requests resolve to null.
-  run(input) {
+  // requests resolve to null. opts: { N, adapt } (adapt=false leaves the
+  // adaptive N untouched, for one-off long runs like the plan).
+  run(input, opts = {}) {
     return new Promise((resolve) => {
       if (this.pending) this.pending.resolve(null);
-      this.pending = { input, resolve };
+      this.pending = { input, resolve, opts };
       this._drain();
     });
   }
@@ -43,12 +44,13 @@ export class SimClient {
     const job = this.pending;
     this.pending = null;
     this.busy = true;
-    const N = this.N;
+    const opts = job.opts || {};
+    const N = opts.N || this.N;
     const payload = { ...job.input, N };
     const finish = (result, error) => {
       this.busy = false;
       if (error) this.log(`sim error: ${error}`);
-      if (result) {
+      if (result && opts.adapt !== false) {
         this.lastMs = result.ms;
         if (result.ms > 1200 && this.N > 100) this.N = Math.max(100, Math.floor(this.N / 2));
         else if (result.ms < 300 && this.N < DEFAULT_SIM_SETTINGS.N) this.N = Math.min(DEFAULT_SIM_SETTINGS.N, this.N * 2);
@@ -97,10 +99,10 @@ export function rosterConfig(rosterPositions, rounds, limits) {
 
 // Build the sim input from app state pieces. Returns null when there is
 // nothing to simulate (draft complete, or no future user turn).
-export function buildSimInput({ model, picks, draft, userId, taken, settings, seed }) {
+export function buildSimInput({ model, picks, draft, userId, taken, settings, seed, horizonsCount = 2 }) {
   const t = turnInfo({ picks, draft, userId });
   if (!t.current || !t.slot || !t.futureTurns.length) return null;
-  const horizons = t.futureTurns.slice(0, 2).map((turn) => turn[0]);
+  const horizons = t.futureTurns.slice(0, horizonsCount).map((turn) => turn[0]);
   const last = horizons[horizons.length - 1];
   const cfg = t.cfg;
   const opts = { type: cfg.type, reversalRound: cfg.reversalRound };
@@ -135,7 +137,8 @@ export function buildSimInput({ model, picks, draft, userId, taken, settings, se
     lateTauMult: s.lateTauMult,
     lateRoundStart: s.lateRoundStart,
     seed: seed || (Date.now() & 0x7fffffff),
-    horizonsInfo: t.futureTurns.slice(0, 2),
+    horizonsInfo: t.futureTurns.slice(0, horizonsCount),
+    currentPick: t.current,
   };
 }
 
