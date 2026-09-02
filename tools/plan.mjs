@@ -114,8 +114,10 @@ for (const pos of ['QB', 'RB', 'WR', 'TE']) {
   console.log(`${pos.padEnd(3)} ${cells.join(' ')}`);
 }
 console.log('\n== suggested draft path (maximize projected starting lineup) ==');
-// horizons[0] is pick 1 itself (everyone available), so turn i maps to horizon index i.
-const turnObjs = [{ picks: turns[0], h: null }].concat(turns.slice(1, 8).map((t, i) => ({ picks: t, h: i + 1 })));
+// Turn i maps to horizon index i (the sim records availability just before
+// that pick, so a slot-1 first pick sees everyone and a slot-4 pick sees the
+// pool after three picks).
+const turnObjs = turns.slice(0, 8).map((t, i) => ({ picks: t, h: i }));
 const best = optimizeWithAlternatives({ model, taken: new Set(), survival: r.survival, turns: turnObjs, rosterPositions: league.roster_positions, myPlayers: [] });
 for (const x of best.path) console.log(`  #${String(x.pick).padStart(3)} ${x.pos.padEnd(3)} ${x.likely ? x.likely.padEnd(22) : ''.padEnd(22)} ${x.pts ? x.pts.toFixed(0).padStart(4) + ' pts' : ''}${x.p != null ? `  (${(x.p * 100).toFixed(0)}% that name)` : ''}${x.starter === false ? '  depth' : ''}`);
 console.log(`  projected starters: ${best.total.toFixed(0)} pts`);

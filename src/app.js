@@ -455,7 +455,7 @@ async function runPlan(reason) {
     taken: state.taken,
     settings: state.simSettings,
     seed: (Date.now() ^ 0x5bd1e995) & 0x7fffffff,
-    horizonsCount: 7,
+    horizonsCount: 9,
   });
   if (!input) {
     state.plan = null;
