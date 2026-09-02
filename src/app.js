@@ -86,6 +86,7 @@ export const state = {
   plan: null,
   planClient: null,
   planBusy: false,
+  planSeq: 0,
   need: null,
   banner: '',
   waitOn: null,
@@ -463,11 +464,14 @@ async function runPlan(reason) {
   }
   state.planBusy = true;
   if (state.tab === 'board') render();
+  const model = state.model;
+  const seq = ++state.planSeq;
   const result = await state.planClient.run(input, { N: 300, adapt: false });
+  // Drop the result if a newer plan was requested or the league/draft/model changed meanwhile.
+  if (seq !== state.planSeq || state.live !== live || state.model !== model) return;
   state.planBusy = false;
   if (!result) return;
   const taken = state.taken;
-  const model = state.model;
   const plan = computePlan({ model, taken, survival: result.survival, horizons: result.horizons, valueFn: adjValueOf });
   const tiers = {};
   for (const pos of ['QB', 'RB', 'WR', 'TE']) tiers[pos] = tierWatch({ model, taken, survival: result.survival, horizons: result.horizons, pos, maxTiers: 2 });
@@ -512,8 +516,9 @@ async function runSim(reason) {
   }
   if (state.sim) state.sim.stale = true;
   const seq = ++state.simSeq;
+  const model = state.model;
   const result = await state.simClient.run(input);
-  if (!result || seq !== state.simSeq) return; // superseded
+  if (!result || seq !== state.simSeq || state.live !== live || state.model !== model) return; // superseded or league changed
   state.sim = { survival: result.survival, horizons: result.horizons, horizonsInfo: input.horizonsInfo, N: result.N, ms: result.ms, at: Date.now(), stale: false, players: input.players.length };
   log(`sim (${reason}): N=${result.N} ${result.ms} ms, ${input.picks.length} picks to #${result.horizons[result.horizons.length - 1]}`);
   deriveSignals();
@@ -580,6 +585,7 @@ function stopLive() {
   state.taken = new Set();
   state.sim = null;
   state.plan = null;
+  state.planBusy = false;
   state.banner = '';
   state.waitOn = null;
 }
