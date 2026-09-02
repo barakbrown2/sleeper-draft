@@ -12,6 +12,8 @@ import { renderSettings, renderFixResults } from './ui/settings.js';
 import { renderBoard } from './ui/board.js';
 import { renderDraftLog, teamName } from './ui/draftlog.js';
 import { renderTeam } from './ui/team.js';
+import { renderDetail } from './ui/detail.js';
+import { checkForUpdate, VERSION } from './update.js';
 
 const DEFAULT_SETTINGS = {
   v: 1,
@@ -67,6 +69,10 @@ export const state = {
   draftFilter: 'ALL',
   draftSort: 'pick',
   live: null,
+  detailId: null,
+  sim: null,
+  banner: '',
+  version: VERSION,
   busy: {},
   log: [],
 };
@@ -170,6 +176,14 @@ export function render() {
   else if (state.tab === 'team') screen.innerHTML = renderTeam(state);
   $('tabbar').innerHTML = TABS.map(([id, label]) => `<button role="tab" data-tab="${id}" aria-selected="${state.tab === id}">${label}</button>`).join('');
   window.scrollTo(0, y);
+  renderSheet();
+}
+
+function renderSheet() {
+  const el = $('sheet');
+  const p = state.detailId && state.model ? state.model.byId.get(state.detailId) : null;
+  el.innerHTML = p && !p.rankOnly ? renderDetail(state, p) : '';
+  document.body.classList.toggle('noscroll', !!(p && !p.rankOnly));
 }
 
 // ---- files: upload, persist, parse ----
@@ -526,6 +540,19 @@ const actions = {
     rebuild();
     render();
   },
+  detail(btn) {
+    state.detailId = btn.dataset.id;
+    renderSheet();
+  },
+  'close-detail'() {
+    state.detailId = null;
+    renderSheet();
+  },
+  async 'check-update'() {
+    const updating = await checkForUpdate(log);
+    if (!updating) toast(`Up to date (build ${VERSION})`, 'info', 3000);
+    render();
+  },
   'draft-view'(btn) {
     state.draftView = btn.dataset.view;
     render();
@@ -729,7 +756,15 @@ async function init() {
   rebuild();
   if (state.bundle && state.bundle.draft) startLive();
   render();
-  log(`app start ${location.href}`);
+  log(`app start ${location.href} build ${VERSION}`);
+  // Pull a newer build if one was deployed (never mid-draft: only when not drafting).
+  const drafting = state.bundle && state.bundle.draft && state.bundle.draft.status === 'drafting';
+  if (!drafting) checkForUpdate(log);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const busy = state.live && state.live.draft && state.live.draft.status === 'drafting';
+    if (!busy) checkForUpdate(log);
+  });
   await Promise.all([connect(), loadPlayers(false)]);
 }
 

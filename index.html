@@ -11,6 +11,8 @@
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
 <link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="icon" href="./icons/icon-192.png">
 <link rel="stylesheet" href="./src/ui/app.css">
 </head>
 <body>
@@ -18,9 +20,11 @@
   <header id="header"></header>
   <main id="screen"><div class="placeholder">Loading</div></main>
   <nav id="tabbar" role="tablist"></nav>
+  <div id="sheet"></div>
   <div id="toast" hidden></div>
 </div>
 <noscript>This app needs JavaScript.</noscript>
+<script src="./src/simcore.js"></script>
 <script type="module" src="./src/app.js"></script>
 </body>
 </html>

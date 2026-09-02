@@ -1,5 +1,6 @@
-// src/ui/board.js - Board screen: filter chips + ranked list of available players.
-import { esc, n1, posClass } from './dom.js';
+// src/ui/board.js - Board screen: filter chips + ranked list of available
+// players with value, points, tier, injury and survival to the next turns.
+import { esc, n1, pct, posClass, survClass } from './dom.js';
 
 export const BOARD_FILTERS = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX'];
 
@@ -19,16 +20,25 @@ export function injuryBadge(p) {
   return ` <span class="inj">${esc(short)}</span>`;
 }
 
-export function playerRow(p, extra = '') {
+function survivalCells(state, p) {
+  const sim = state.sim;
+  if (!sim || !sim.survival) return '';
+  const s = sim.survival[p.player_id];
+  if (!s) return '<div class="surv muted">-</div>';
+  const second = sim.horizons.length > 1 ? `<div class="${survClass(s[1])} small">${pct(s[1])}</div>` : '';
+  return `<div class="surv"><div class="${survClass(s[0])}">${pct(s[0])}</div>${second}</div>`;
+}
+
+export function playerRow(state, p) {
   const rank = p.blendedRank != null ? Math.round(p.blendedRank) : '-';
   return `<div class="prow" data-action="detail" data-id="${esc(p.player_id)}">
     <div class="tier">T${p.tier || '-'}</div>
     <div class="grow">
       <div class="pname">${esc(p.name)}${injuryBadge(p)}</div>
-      <div class="psub"><span class="${posClass(p.pos)}">${esc(p.pos)}${p.posRank || ''}</span> ${esc(p.team || 'FA')} <span class="muted">rank ${rank}</span></div>
+      <div class="psub"><span class="${posClass(p.pos)}">${esc(p.pos)}${p.posRank || ''}</span> ${esc(p.team || 'FA')} <span class="muted">rank ${rank} &middot; ${n1(p.lgPts)} pts</span></div>
     </div>
-    ${extra}
-    <div class="pnums"><div class="big">${n1(p.value)}</div><div class="muted small">${n1(p.lgPts)} pts</div></div>
+    ${survivalCells(state, p)}
+    <div class="pnums"><div class="big">${n1(p.value)}</div><div class="muted small">VORP ${n1(p.vorpProj)}</div></div>
   </div>`;
 }
 
@@ -43,13 +53,18 @@ export function renderBoard(state) {
   const list = availablePlayers(state, filter);
   const rows = list
     .slice(0, limit)
-    .map((p) => playerRow(p))
+    .map((p) => playerRow(state, p))
     .join('');
   const b = state.model.baselines;
   const bl = Object.keys(b)
     .map((k) => `${k}${b[k]}`)
     .join(' ');
-  return `<div class="chips">${BOARD_FILTERS.map((f) => `<button class="chip" data-action="board-filter" data-pos="${f}" aria-pressed="${f === filter}">${f}</button>`).join('')}</div>
+  const sim = state.sim;
+  const legend = sim
+    ? `<div class="muted small legend">Available at your next turn (#${sim.horizons[0]})${sim.horizons.length > 1 ? ` / the one after (#${sim.horizons[1]})` : ''}${sim.stale ? ', updating' : ''}</div>`
+    : '';
+  return `${state.banner || ''}<div class="chips">${BOARD_FILTERS.map((f) => `<button class="chip" data-action="board-filter" data-pos="${f}" aria-pressed="${f === filter}">${f}</button>`).join('')}</div>
+    ${legend}
     <div class="card list">${rows || '<div class="placeholder">No players</div>'}</div>
     ${list.length > limit ? '<button class="btn block" data-action="board-more">Show more</button>' : ''}
     <p class="muted small">Value = blended VORP over replacement (${esc(bl)}). Tap a row for details.</p>`;

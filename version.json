@@ -1,0 +1,28 @@
+{
+  "v": "20260902-221736",
+  "files": [
+    "./src/api.js",
+    "./src/app.js",
+    "./src/csv.js",
+    "./src/draft.js",
+    "./src/live.js",
+    "./src/model.js",
+    "./src/scoring.js",
+    "./src/sim.js",
+    "./src/sim.worker.js",
+    "./src/simcore.js",
+    "./src/storage.js",
+    "./src/ui/app.css",
+    "./src/ui/board.js",
+    "./src/ui/detail.js",
+    "./src/ui/dom.js",
+    "./src/ui/draftlog.js",
+    "./src/ui/settings.js",
+    "./src/ui/team.js",
+    "./src/update.js",
+    "./src/value.js",
+    "./src/version.js",
+    "./index.html",
+    "./manifest.webmanifest"
+  ]
+}

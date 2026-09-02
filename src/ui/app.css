@@ -134,7 +134,7 @@ input[type='file'] {
   font-size: 15px;
 }
 .hdr-league {
-  font-size: 13px;
+  font-size: 15px;
   margin-top: 2px;
 }
 .yourpick {
@@ -152,7 +152,7 @@ input[type='file'] {
 }
 .badge {
   display: inline-block;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   color: #000;
   background: var(--amber);
@@ -171,9 +171,75 @@ input[type='file'] {
   padding-right: 12px;
 }
 .you {
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--green);
+}
+pre {
+  font-size: 15px;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 19;
+}
+.sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 88vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: var(--card);
+  border-radius: 16px 16px 0 0;
+  padding: 12px 16px calc(env(safe-area-inset-bottom) + 20px);
+  z-index: 20;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.35);
+}
+.sheet-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.sheet-head .grow {
+  flex: 1;
+  min-width: 0;
+}
+.sheet h3 {
+  margin-top: 14px;
+}
+body.noscroll {
+  overflow: hidden;
+}
+.surv {
+  flex: 0 0 58px;
+  text-align: right;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.surv-g {
+  color: var(--green);
+}
+.surv-a {
+  color: var(--amber);
+}
+.surv-r {
+  color: var(--red);
+}
+.legend {
+  padding: 0 4px 8px;
+}
+.banner {
+  background: var(--amber);
+  color: #000;
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-weight: 700;
 }
 .teamrow {
   padding: 4px 0;
@@ -431,7 +497,7 @@ input[type='file'] {
 }
 .chip {
   flex: 0 0 auto;
-  min-height: 40px;
+  min-height: 44px;
   padding: 6px 14px;
   border-radius: 20px;
   border: 1px solid var(--line);
@@ -463,9 +529,9 @@ input[type='file'] {
   min-width: 0;
 }
 .tier {
-  flex: 0 0 34px;
+  flex: 0 0 36px;
   text-align: center;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--muted);
   background: var(--card2);
@@ -493,7 +559,7 @@ input[type='file'] {
 }
 .inj {
   display: inline-block;
-  font-size: 12px;
+  font-size: 15px;
   font-weight: 700;
   color: #fff;
   background: var(--red);

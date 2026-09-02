@@ -325,8 +325,8 @@ function debugCard(state) {
     .slice(-60)
     .map((l) => esc(l))
     .join('\n');
-  return `<section class="card"><h2>Debug log</h2><pre class="log">${lines || '(empty)'}</pre>
-    <button class="btn" data-action="clear-log">Clear log</button></section>`;
+  return `<section class="card"><h2>Debug log</h2><p class="muted small">Build ${esc(state.version || '-')}</p><pre class="log">${lines || '(empty)'}</pre>
+    <div class="btnrow"><button class="btn" data-action="clear-log">Clear log</button><button class="btn" data-action="check-update">Check for update</button></div></section>`;
 }
 
 function dangerCard() {

@@ -48,6 +48,12 @@ export function pct(x) {
   return `${Math.round(x * 100)}%`;
 }
 
+// Survival color: green >= 70%, amber 40-69%, red < 40% (plan section 11).
+export function survClass(x) {
+  if (x == null || Number.isNaN(x)) return '';
+  return x >= 0.7 ? 'surv-g' : x >= 0.4 ? 'surv-a' : 'surv-r';
+}
+
 export function posClass(pos) {
   return `pos pos-${String(pos || '').replace(/[^A-Z]/g, '')}`;
 }
